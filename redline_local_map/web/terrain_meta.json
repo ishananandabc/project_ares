@@ -1,0 +1,32 @@
+{
+  "landing": {
+    "longitude_deg_east": 137.4417,
+    "latitude_deg": -4.5895,
+    "projected_x_m": 8146815.1945889965,
+    "projected_y_m": -272041.2242832139,
+    "source_row": 27260,
+    "source_column": 18821,
+    "absolute_elevation_m": -4501.0283203125
+  },
+  "browser": {
+    "file": "terrain.bin",
+    "encoding": "little-endian float32 interleaved elevation_m,slope_deg",
+    "width_cells": 600,
+    "height_cells": 600,
+    "cell_size_m": 20,
+    "local_left_m": -6000.0,
+    "local_top_m": 6000.0
+  },
+  "grid": {
+    "width_cells": 2400,
+    "height_cells": 2400,
+    "cell_size_m": 5,
+    "local_left_m": -6000.0,
+    "local_top_m": 6000.0,
+    "projected_left_m": 8140815.1945889965,
+    "projected_top_m": -266041.2242832139,
+    "row_direction": "south",
+    "column_direction": "east",
+    "cell_coordinates": "center"
+  }
+}

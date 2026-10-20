@@ -1,0 +1,32 @@
+{
+  "source": "data/raw/gale_hirise_color.tif",
+  "projection": "Mars Equirectangular",
+  "mars_radius_m": 3396190.0,
+  "landing": {
+    "name": "Bradbury Landing",
+    "longitude_deg_east": 137.4417,
+    "latitude_deg": -4.5895,
+    "projected_x_m": 8146815.1945889965,
+    "projected_y_m": -272041.2242832139,
+    "source_column": 27260,
+    "source_row": 8164,
+    "image_fraction_x": 0.7330482590103848,
+    "image_fraction_y": 0.17008333333333334
+  },
+  "crop": {
+    "width_m": 8185.0,
+    "height_m": 12000.0,
+    "left_projected_m": 8140815.0,
+    "right_projected_m": 8149000.0,
+    "top_projected_m": -270000.0,
+    "bottom_projected_m": -282000.0,
+    "local_left_m": -6000.19458899647,
+    "local_right_m": 2184.80541100353,
+    "local_top_m": 2041.2242832139018,
+    "local_bottom_m": -9958.775716786098
+  },
+  "output": {
+    "width_px": 5588,
+    "height_px": 8192
+  }
+}
