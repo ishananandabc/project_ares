@@ -1,2 +1,4 @@
 .DS_Store
 /redline_local_map/data
+
+/redline_local_map/.venv/
