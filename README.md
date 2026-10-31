@@ -1,0 +1,7 @@
+---
+## Problem Statement:
+
+NASA has explored Mars robotically for decades, studying its extreme environment, mapping its surface, and collecting many types of data. Far from home, the firstastronauts to set foot on Mars will want the best map possible, with information on the details of their routes and destinations, updates on current conditions, 
+and the data needed to complete their mission quickly and safely. Your challenge is to create a layered, integrated view of a location or route on the Martian 
+surface that pulls together data from multiple NASA science missions and could help a human explorer plan and carry out a successful Marswalk while conducting newand exciting science along the way.
+---
