@@ -1,19 +1,22 @@
 {
   "mesh": {
-    "vertices_per_axis": 769,
-    "step_m": 36.458333333333336,
-    "size_m": 28000,
-    "local_left_m": -14000.0,
-    "local_top_m": 14000.0,
+    "width_vertices": 801,
+    "height_vertices": 1001,
+    "step_m": 40,
+    "width_m": 32000,
+    "height_m": 40000,
+    "local_left_m": -18000,
+    "local_top_m": 20000,
     "encoding": "little-endian float32 relative elevation; NaN invalid",
     "file": "terrain3d.bin"
   },
   "texture": {
-    "file": "hirise_registered.webp",
-    "size_px": 4096,
-    "projected_left_m": 8132815.1945889965,
-    "projected_top_m": -258041.2242832139,
-    "metres_per_pixel": 6.8359375,
+    "file": "hirise_registered.png",
+    "width_px": 3200,
+    "height_px": 4000,
+    "projected_left_m": 8128815.1945889965,
+    "projected_top_m": -252041.2242832139,
+    "metres_per_pixel": 10.0,
     "source_projected_bounds": {
       "left": 8140000.0,
       "right": 8149000.0,
@@ -34,16 +37,16 @@
   "terrain_query": {
     "file": "terrain3d_query.bin",
     "encoding": "little-endian float32 interleaved elevation_m,slope_deg",
-    "width_cells": 769,
-    "height_cells": 769,
-    "cell_size_m": 36.458333333333336,
-    "local_left_m": -14000.0,
-    "local_top_m": 14000.0
+    "width_cells": 801,
+    "height_cells": 1001,
+    "cell_size_m": 40,
+    "local_left_m": -18000,
+    "local_top_m": 20000
   },
   "validation": {
-    "valid_vertices": 561787,
-    "total_vertices": 591361,
-    "texture_alpha_coverage": 0.18423789739608765,
-    "bradbury_mesh_relative_m": -0.30908203125
+    "valid_vertices": 727255,
+    "total_vertices": 801801,
+    "texture_alpha_coverage": 0.13359375,
+    "bradbury_mesh_relative_m": -0.333984375
   }
 }

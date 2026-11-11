@@ -7,27 +7,27 @@ const [meta, terrainMeta, heightsBuffer, queryBuffer, extendedQueryBuffer] = awa
 ]);
 function checkJson(r){if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json()}
 function checkBuffer(r){if(!r.ok)throw Error(`HTTP ${r.status}`);return r.arrayBuffer()}
-const n=meta.mesh.vertices_per_axis, step=meta.mesh.step_m, left=meta.mesh.local_left_m, top=meta.mesh.local_top_m, heights=new Float32Array(heightsBuffer), query=new DataView(queryBuffer), extendedQuery=new DataView(extendedQueryBuffer);
-if(heights.length!==n*n || query.byteLength!==terrainMeta.browser.width_cells*terrainMeta.browser.height_cells*8 || extendedQuery.byteLength!==n*n*8)throw Error('Terrain asset size mismatch');
+const cols=meta.mesh.width_vertices, rows=meta.mesh.height_vertices, step=meta.mesh.step_m, left=meta.mesh.local_left_m, top=meta.mesh.local_top_m, heights=new Float32Array(heightsBuffer), query=new DataView(queryBuffer), extendedQuery=new DataView(extendedQueryBuffer);
+if(heights.length!==rows*cols || query.byteLength!==terrainMeta.browser.width_cells*terrainMeta.browser.height_cells*8 || extendedQuery.byteLength!==rows*cols*8)throw Error('Terrain asset size mismatch');
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x11171a);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,1,100000);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;$('view').appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=25;controls.maxDistance=110000;controls.maxPolarAngle=Math.PI/2-.015;
-function reset(){camera.position.set(14500,11500,22000);controls.target.set(0,0,0);controls.update()}
+function reset(){camera.position.set(12500,17000,29000);controls.target.set(-2000,0,0);controls.update()}
 reset();
 scene.add(new THREE.HemisphereLight(0xffffff,0x56504b,2.1));const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(-3500,7000,4500);scene.add(sun);
 const world=new THREE.Group();scene.add(world);
-const positions=new Float32Array(n*n*3),uvs=new Float32Array(n*n*2),indices=[];
-for(let r=0;r<n;r++)for(let c=0;c<n;c++){const i=r*n+c;positions[i*3]=left+c*step;positions[i*3+1]=Number.isFinite(heights[i])?heights[i]:0;positions[i*3+2]=top-r*step;uvs[i*2]=c/(n-1);uvs[i*2+1]=1-r/(n-1)}
-for(let r=0;r<n-1;r++)for(let c=0;c<n-1;c++){const a=r*n+c,b=a+1,d=a+n+1,e=a+n;
+const positions=new Float32Array(rows*cols*3),uvs=new Float32Array(rows*cols*2),indices=[];
+for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const i=r*cols+c;positions[i*3]=left+c*step;positions[i*3+1]=Number.isFinite(heights[i])?heights[i]:0;positions[i*3+2]=top-r*step;uvs[i*2]=c/(cols-1);uvs[i*2+1]=1-r/(rows-1)}
+for(let r=0;r<rows-1;r++)for(let c=0;c<cols-1;c++){const a=r*cols+c,b=a+1,d=a+cols+1,e=a+cols;
   if(Number.isFinite(heights[a])&&Number.isFinite(heights[b])&&Number.isFinite(heights[e]))indices.push(a,b,e);
   if(Number.isFinite(heights[b])&&Number.isFinite(heights[d])&&Number.isFinite(heights[e]))indices.push(b,d,e)
 }
 const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.BufferAttribute(uvs,2));geometry.setIndex(indices);geometry.computeVertexNormals();
 const baseMaterial=new THREE.MeshStandardMaterial({color:0x8b7666,roughness:1,side:THREE.DoubleSide});const base=new THREE.Mesh(geometry,baseMaterial);world.add(base);
-const texture=await new THREE.TextureLoader().loadAsync('./hirise_registered.webp');texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+const texture=await new THREE.TextureLoader().loadAsync('./'+meta.texture.file);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
 const imageMaterial=new THREE.MeshStandardMaterial({map:texture,transparent:true,alphaTest:.05,roughness:1,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});const imagery=new THREE.Mesh(geometry,imageMaterial);imagery.raycast=()=>{};world.add(imagery);
-function terrainHeight(x,z){const c=(x-left)/step,r=(top-z)/step;if(c<0||r<0||c>n-1||r>n-1)return null;const c0=Math.min(n-2,Math.floor(c)),r0=Math.min(n-2,Math.floor(r)),u=c-c0,v=r-r0;const a=heights[r0*n+c0],b=heights[r0*n+c0+1],d=heights[(r0+1)*n+c0],e=heights[(r0+1)*n+c0+1];return [a,b,d,e].every(Number.isFinite)?(1-v)*((1-u)*a+u*b)+v*((1-u)*d+u*e):null}
+function terrainHeight(x,z){const c=(x-left)/step,r=(top-z)/step;if(c<0||r<0||c>cols-1||r>rows-1)return null;const c0=Math.min(cols-2,Math.floor(c)),r0=Math.min(rows-2,Math.floor(r)),u=c-c0,v=r-r0;const a=heights[r0*cols+c0],b=heights[r0*cols+c0+1],d=heights[(r0+1)*cols+c0],e=heights[(r0+1)*cols+c0+1];return [a,b,d,e].every(Number.isFinite)?(1-v)*((1-u)*a+u*b)+v*((1-u)*d+u*e):null}
 function marker(color,radius){const mesh=new THREE.Mesh(new THREE.SphereGeometry(radius,16,12),new THREE.MeshBasicMaterial({color,depthTest:true}));world.add(mesh);return mesh}
 const landing=marker(0xff493f,70);let astronautXY=[0,0];
 function place(mesh,x,north){const h=terrainHeight(x,north);mesh.visible=h!==null;if(h!==null)mesh.position.set(x,h+mesh.geometry.parameters.radius*.8,north)}
@@ -635,7 +635,7 @@ renderer.domElement.addEventListener('pointerup',async e=>{
 });
 $('exaggeration').onchange=e=>{const factor=Number(e.target.value);world.scale.y=factor;$('warning').textContent=factor===1?'':`${factor}× vertical exaggeration · heights visually amplified`};
 $('wire').onchange=e=>{baseMaterial.wireframe=e.target.checked;imagery.visible=!e.target.checked};
-$('top').onclick=()=>{camera.position.set(0,36000,1);controls.target.set(0,0,0);controls.update()};$('reset').onclick=reset;
+$('top').onclick=()=>{camera.position.set(-2000,50000,1);controls.target.set(-2000,0,0);controls.update()};$('reset').onclick=reset;
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 addEventListener('keydown',event=>{if(event.code==='Space'&&event.target.tagName!=='INPUT'&&event.target.tagName!=='SELECT'){event.preventDefault();togglePlay()}});
 readout.textContent='Click the terrain to inspect coordinates, elevation, and slope.';

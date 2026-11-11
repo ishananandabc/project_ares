@@ -125,7 +125,7 @@ Each stop has a confidence-weighted reward and a visit cost in time, oxygen, rov
 
 ## 3D mission simulation
 
-`web/3d.html` renders the plan on the 28 km Gale DEM instead of the 2D basemap. It loads `plan.json` and drapes everything onto the terrain mesh:
+`web/3d.html` renders the plan on the 32 × 40 km Gale DEM instead of the 2D basemap. It loads `plan.json` and drapes everything onto the terrain mesh:
 
 - **Route** — amber ribbon following elevation (not a flat line), sampled at half the DEM step.
 - **Stops** — orange pins with labels; they turn green when the astronaut samples them. Their dwell time is the stop's visit cost.
@@ -260,7 +260,7 @@ All coordinates use the same local `(east, north)` metre frame as `terrain.bin`.
 
 ## Separate 3D terrain viewer
 
-Run `source .venv/bin/activate && python scripts/preprocess_3d.py` from the project root after the 5 m terrain preprocessing. This creates a 28 km × 28 km, 769 × 769 display mesh (`web/terrain3d.bin`), a matching 4096 × 4096 georegistered texture from the original full HiRISE mosaic (`web/hirise_registered.webp`), an extended inspection grid (`web/terrain3d_query.bin`), and `web/terrain3d_meta.json`. The DEM determines the 28 km centered extent; HiRISE covers only its actual overlapping footprint. The original processed arrays remain the source for future routing. The 3D viewer uses local east as Three.js X, north as Three.js Z, and elevation relative to Bradbury as Three.js Y. At 1× vertical scale, all axes use metres.
+Run `source .venv/bin/activate && python scripts/preprocess_3d.py` from the project root after the 5 m terrain preprocessing. This creates a 32 km east–west × 40 km north–south, 801 × 1001 display mesh (`web/terrain3d.bin`), a matching 3200 × 4000 georegistered texture from the original full HiRISE mosaic (`web/hirise_registered.png`), an extended inspection grid (`web/terrain3d_query.bin`), and `web/terrain3d_meta.json`. The extent runs from local E −18 km to +14 km and N −20 km to +20 km, staying inside the DEM. HiRISE covers only its actual overlapping footprint. The original processed arrays remain the source for future routing. The 3D viewer uses local east as Three.js X, north as Three.js Z, and elevation relative to Bradbury as Three.js Y. At 1× vertical scale, all axes use metres.
 
 Serve `web/` with `python -m http.server 8765 -d web` and open `http://localhost:8765/3d.html`. Drag to orbit, right drag to pan, scroll to zoom, and click terrain to inspect coordinates, elevation and slope. The scale control offers 1×, 2× and 5×; the latter two explicitly identify visual exaggeration. `window.REDLINE.setAstronaut(east_m,north_m)` and `window.REDLINE.setEnvelope([{x_m,y_m},...])` are available to a future planner. `window.REDLINE.terrainAt(east_m,north_m)` returns a status of `valid`, `nodata`, or `outside` plus measurements when valid. The current 2D viewer remains at `index.html`.
 
