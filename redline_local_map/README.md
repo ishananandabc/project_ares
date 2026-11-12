@@ -11,7 +11,7 @@ cd project_ares
 ./run_demo.sh
 ```
 
-Open [2D viewer](http://localhost:8000/) or [3D viewer](http://localhost:8000/3d.html). `PORT=9000 ./run_demo.sh` selects another port. The Rust server provides live hazard replanning; a static server provides offline playback with the committed `plan.json`:
+Open [2D viewer](http://localhost:8000/) or [3D viewer](http://localhost:8000/3d.html). `PORT=9000 ./run_demo.sh` selects another port, and `./run_demo.sh --seed 42` pins the science-site set. The Rust server provides live hazard and site replanning; a static server provides offline playback with the committed `plan.json`:
 
 ```bash
 python3 -m http.server 8000 -d redline_local_map/web
@@ -50,19 +50,25 @@ Bradbury Landing is REDLINE `(0,0)`; +x is east, +y is north, metres. The source
 
 The Three.js frame is X=east, Z=north, Y=elevation relative to Bradbury. The 3D mesh has 660 × 1149 vertices at 50 m spacing. The 2D base, 3D mesh, browser queries, and imagery registration all derive from the same manifest. The original DEM and image have different footprints and are aligned by projected metres, never raster pixel numbers.
 
-## Science stops (S1–S5)
+## Science sites
 
-The five labels are candidate science targets, not waypoints the mission must visit:
+The five fixed stops are gone. Science sites are generated from the 200 m planning grid for a numeric seed, so every run can start from a different mission and any seed can be replayed exactly.
 
-| Label | Local position (E, N) | Base science value |
-|---|---|---|
-| S1 | (−3000, +1000) m | 8 |
-| S2 | (+1500, +1500) m | 10 |
-| S3 | (+1800, −1500) m | 12 |
-| S4 | (−1500, −3000) m | 14 |
-| S5 | (+500, +500) m | 16 |
+- Candidate cells lie within 4.2 km of Bradbury, at least 700 m from the landing site, on slopes of at most 15°, and at least 750 m apart.
+- Ten sites are drawn per seed from the valid pool.
+- Each site is classified from its local terrain signature (relief over ±400 m, elevation, and slope relative to the candidate pool) into one of five activities, each with its own science value and visit cost:
 
-Each stop has a confidence-weighted reward and a visit cost in time, oxygen, rover power, and equipment power. The planner picks the subset and order that maximizes reward while keeping a certified path back to the safehouse. That is why the current plan visits `[S5, S2, S3, S4, S1]` and not all five, or not in numeric order.
+| Activity | Terrain signature | Value | Visit cost (time · O₂ · rover · equipment) |
+|---|---|---|---|
+| Layered outcrop | high local relief | 14 | 700 s · 0.55 · 7.5 · 0.12 |
+| Clay-bearing basin | low elevation, gentle slope | 12.5 | 620 s · 0.48 · 5.0 · 0.18 |
+| Fracture and vein survey | mid relief, mid slope | 9.5 | 480 s · 0.38 · 4.5 · 0.14 |
+| Ridge overlook | high elevation | 7.5 | 420 s · 0.30 · 3.5 · 0.08 |
+| Regolith sample | low relief | 6 | 340 s · 0.25 · 3.0 · 0.10 |
+
+Value and confidence are jittered from the same seed, and the reward is value × confidence. The planner searches stop order and the subset that maximizes reward under all four resource constraints, and it still certifies a return path for every plan. Selecting ten sites usually yields a plan that samples six or seven of them and returns home.
+
+The 3D viewer lists every candidate with its reward. **Randomize** draws a new seed, **All** and **None** set the selection, and individual checkboxes toggle sites. Every change replans from the astronaut's current position with the remaining resources. The seed is shown in the panel and printed at startup; reproduce a run with `REDLINE_SEED=<seed> ./run_demo.sh` or `./run_demo.sh --seed <seed>`.
 
 ## 3D mission simulation
 
@@ -73,6 +79,7 @@ Each stop has a confidence-weighted reward and a visit cost in time, oxygen, rov
 - **Return-safe region** — translucent green raster over the cells where a return path fits the remaining resources. It shrinks as the mission spends oxygen and power.
 - **Playback** — the astronaut marker moves along the route, pauses at each science stop, and the resource bars and HUD update from the planner's per-leg costs.
 - **Hazards** — dust storms and bad terrain can be placed on the terrain at runtime. Each hazard is a circle with a radius and severity; it raises the cost of every graph edge it covers and immediately triggers a fresh plan.
+- **Science sites** — the mission panel lists every seeded candidate with its reward. Randomize, All, None, and per-site checkboxes replan immediately.
 - **Controls** — Play/Pause (or space), Restart, scrubber, 60×–1800× time compression, Focus route, vertical exaggeration, wireframe, top-down, and click-to-inspect terrain.
 
 ### Live hazard replanning
@@ -107,6 +114,8 @@ REDLINE.focusRoute();
 
 ```json
 {
+  "seed": 42,
+  "site_ids": [1, 3, 4, 7],
   "hazards": [
     {"x_m": 1200, "y_m": 200, "radius_m": 1800, "kind": "dust", "severity": 1.0},
     {"x_m": -3000, "y_m": 1000, "radius_m": 1200, "kind": "terrain", "severity": 0.7}
@@ -118,7 +127,7 @@ REDLINE.focusRoute();
 }
 ```
 
-All fields are optional. With no body it returns the same default plan that is written to `plan.json`. `GET /api/health` reports whether the API is available.
+All fields are optional. `seed` selects the site set (`0` when omitted) and `site_ids` selects which sites the mission should consider; omitting it selects all sites for the seed. Unknown site IDs return HTTP 422. `GET /api/sites?seed=<n>` returns the candidate list for a seed without planning, and `GET /api/health` reports whether the API is available.
 
 The response is the full plan schema. Replanning-related fields:
 
@@ -129,7 +138,9 @@ The response is the full plan schema. Replanning-related fields:
 - `mission.end_time_s` — projected mission clock at return.
 - `mission.used` / `mission.remaining` — resources for this segment, not the whole mission.
 - `safe_region_frames` — return-safe masks sampled along this segment, hex-packed, with `t` as a segment fraction.
-- `mission.stops_total` — total science targets, so the HUD can show `visited / 5` across replans.
+- `mission.stops_total` — science stops in this mission (visited plus planned), so the HUD can show `visited / total` across replans.
+- `mission.sites_total`, `mission.sites_selected` — candidate sites for the seed and how many the user selected.
+- `mission.seed` and `science.seed` — the site seed; `science.sites` lists every candidate with its activity, reward, visit cost, and selection flag.
 
 Outbound legs are costed with the travel forecast and the return leg with the return forecast, matching the planner's resource accounting. The mission clock and the resource bars remain continuous because the viewer adds the previous segment's elapsed time and spend to the new segment.
 

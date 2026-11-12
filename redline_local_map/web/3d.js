@@ -76,6 +76,7 @@ const lerpVec=(a,b,u)=>({time_s:a.time_s+(b.time_s-a.time_s)*u,oxygen:a.oxygen+(
 const missionGroup=new THREE.Group();world.add(missionGroup);
 const routeGroup=new THREE.Group();missionGroup.add(routeGroup);
 const stopGroup=new THREE.Group();missionGroup.add(stopGroup);
+const siteGroup=new THREE.Group();missionGroup.add(siteGroup);
 const hazardGroup=new THREE.Group();missionGroup.add(hazardGroup);
 let plan=null,routePoints=[],routeSamples=[],timeline=[],missionDuration=0;
 let stops=[],safeMesh=null,safeTexture=null,safeMeta=null,safeView=null,safeFrames=[],currentFrame=-1;
@@ -85,6 +86,7 @@ let progress=0,playing=false,missionTime=0;
 let hazards=[],hazardMode=null,hazardRadius=1200,hazardSeverity=1;
 let apiReady=false,elapsedOffset=0,totalStops=5,replanToken=0;
 const completedStops=new Map();
+let scienceSeed=null,siteList=[],selectedSiteIds=[];
 
 function disposeObject(object){object.traverse?.(child=>{child.geometry?.dispose?.();const materials=child.material?(Array.isArray(child.material)?child.material:[child.material]):[];for(const material of materials){material.map?.dispose?.();material.dispose?.()}})}
 function clearGroup(group){while(group.children.length){const child=group.children[0];group.remove(child);disposeObject(child)}}
@@ -175,6 +177,23 @@ function buildStops(){
     if(completed)group.scale.setScalar(1.15);
     stopGroup.add(group);
     stop.group=group;stop.orb=orb;stop.pin=pin;stop.timeVisited=completed;
+  }
+  buildSites();
+}
+
+function buildSites(){
+  clearGroup(siteGroup);
+  for(const site of siteList){
+    if(stops.some(stop=>stop.id===site.id))continue;
+    const group=new THREE.Group();
+    const orb=new THREE.Mesh(new THREE.SphereGeometry(52,16,12),new THREE.MeshBasicMaterial({color:0x93a6b3,transparent:true,opacity:.5}));
+    orb.position.y=140;
+    const label=makeLabel(`S${site.id}`,'#c4d3dd');
+    label.position.y=330;label.scale.set(420,126,1);
+    group.add(orb,label);
+    group.position.set(site.x_m,heightCached(site.x_m,site.y_m),site.y_m);
+    group.renderOrder=5;
+    siteGroup.add(group);
   }
 }
 
@@ -456,7 +475,6 @@ function setPlan(next,options={}){
   plan=next||{};
   progress=0;missionTime=0;playing=false;
   elapsedOffset=Number(plan.mission?.elapsed_before)||0;
-  totalStops=Number(plan.mission?.stops_total)||stops.length||5;
   const preserved=options.preserved||[];
   const incoming=(plan.stops||[]).map(stop=>({...stop,completed:false,timeVisited:false}));
   const incomingIds=new Set(incoming.map(stop=>stop.id));
@@ -464,6 +482,9 @@ function setPlan(next,options={}){
     .filter(stop=>!incomingIds.has(stop.id))
     .map(stop=>({...stop,completed:true,timeVisited:true,arrive_index:undefined,dwellStart:NaN,dwellEnd:NaN}));
   stops=[...incoming,...kept];
+  const planned=Number(plan.mission?.stops_total);
+  totalStops=Number.isFinite(planned)?planned:stops.length;
+  applyScience(plan.science);
   const frames=plan.safe_region_frames||[];
   setSafeRegion(plan.safe_region);
   if(plan.safe_region&&frames.length){
@@ -485,6 +506,81 @@ function setPlan(next,options={}){
   applyProgress();
   if(options.focus!==false)focusRoute();
   $('mission-status').textContent=options.status||'Plan loaded · press Play';
+}
+
+// --------------------------------------------------------------- science --
+const escapeHtml=text=>String(text??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+function applyScience(science){
+  if(!science||!Array.isArray(science.sites))return;
+  scienceSeed=Number.isFinite(Number(science.seed))?Number(science.seed):null;
+  siteList=science.sites.map(site=>({...site}));
+  selectedSiteIds=Array.isArray(science.selected)?[...science.selected]:siteList.map(site=>site.id);
+  renderSiteList();
+}
+
+function renderSiteList(){
+  const box=$('site-list');
+  if(!box)return;
+  const seed=$('science-seed');
+  if(seed)seed.textContent=scienceSeed===null?'–':`seed ${scienceSeed}`;
+  if(!siteList.length){box.innerHTML='<div class="hint">No science sites loaded.</div>';return}
+  box.innerHTML=siteList.map(site=>{
+    const checked=selectedSiteIds.includes(site.id);
+    return `<label class="site${checked?' on':''}"><input type="checkbox" data-site="${site.id}"${checked?' checked':''}${apiReady?'':' disabled'}>`
+      +`<span class="sname">S${site.id} ${escapeHtml(site.label)}</span>`
+      +`<span class="sval">${(Number(site.reward)||0).toFixed(1)}</span></label>`;
+  }).join('');
+  for(const input of box.querySelectorAll('input[data-site]'))input.onchange=()=>setSiteSelected(Number(input.dataset.site),input.checked);
+}
+
+function setScienceHint(text){const element=$('science-hint');if(element)element.textContent=text}
+
+function selectedSummary(){
+  const planned=stops.filter(stop=>!stop.completed).length;
+  return `${selectedSiteIds.length} of ${siteList.length} sites selected · ${planned} on this plan`;
+}
+
+async function setSiteSelected(id,on){
+  selectedSiteIds=(on?[...new Set([...selectedSiteIds,id])]:selectedSiteIds.filter(value=>value!==id)).sort((a,b)=>a-b);
+  renderSiteList();
+  buildStops();
+  await replan('Science selection updated');
+}
+
+async function selectAllSites(){
+  selectedSiteIds=siteList.map(site=>site.id);
+  renderSiteList();
+  buildStops();
+  await replan('All science sites selected');
+}
+
+async function clearSites(){
+  selectedSiteIds=[];
+  renderSiteList();
+  buildStops();
+  await replan('No science sites selected');
+}
+
+async function randomizeSites(){
+  if(!apiReady){setScienceHint('Live site generation needs ./run_demo.sh.');return}
+  const seed=Math.floor(Math.random()*1_000_000_000);
+  setScienceHint('Generating a new site set…');
+  try{
+    const response=await fetch(`/api/sites?seed=${seed}`);
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const payload=await response.json();
+    completedStops.clear();
+    stops=[];
+    scienceSeed=Number(payload.seed);
+    siteList=(payload.sites||[]).map(site=>({...site}));
+    selectedSiteIds=siteList.map(site=>site.id);
+    renderSiteList();
+    buildStops();
+    await replan('New science sites generated');
+  }catch(error){
+    setScienceHint(`Could not generate sites: ${error.message}`);
+  }
 }
 
 // --------------------------------------------------------------- replanning --
@@ -520,11 +616,13 @@ async function replan(reason){
   const visited=[...completedStops.keys()];
   const token=++replanToken;
   setHazardHint(`${reason} · replanning…`);
+  const body={hazards,start,spent_before:spent,elapsed_s:elapsed,visited_stop_ids:visited};
+  if(Number.isFinite(scienceSeed)){body.seed=scienceSeed;body.site_ids=selectedSiteIds}
   try{
     const response=await fetch('/api/plan',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({hazards,start,spent_before:spent,elapsed_s:elapsed,visited_stop_ids:visited})
+      body:JSON.stringify(body)
     });
     const payload=await response.json().catch(()=>({error:`HTTP ${response.status}`}));
     if(token!==replanToken)return;
@@ -540,6 +638,7 @@ async function replan(reason){
       status:`Replanned · ${remaining} stop${remaining===1?'':'s'} left`
     });
     setHazardHint(`${reason} · ${hazards.length} hazard${hazards.length===1?'':'s'} active · ${remaining} stop${remaining===1?'':'s'} left`);
+    setScienceHint(selectedSummary());
     if(wasPlaying)play();
   }catch(error){
     if(token!==replanToken)return;
@@ -581,6 +680,9 @@ $('hazard-dust').onclick=()=>setHazardMode('dust');
 $('hazard-terrain').onclick=()=>setHazardMode('terrain');
 $('hazard-clear').onclick=clearHazards;
 $('hazard-undo').onclick=undoHazard;
+$('sites-random').onclick=randomizeSites;
+$('sites-all').onclick=selectAllSites;
+$('sites-none').onclick=clearSites;
 
 window.REDLINE={setAstronaut:(x_m,y_m)=>{if(!Number.isFinite(x_m)||!Number.isFinite(y_m))throw Error('Expected metre coordinates');astronautXY=[x_m,y_m];placeAstronaut(x_m,y_m)},setEnvelope,terrainAt,resetView:reset,setPlan,setRoute,setStops,setSafeRegion,play,pause,seek,focusRoute,
   setHazards:async list=>{hazards=(list||[]).filter(h=>Number.isFinite(h.x_m)&&Number.isFinite(h.y_m)&&h.radius_m>0).map(h=>({x_m:h.x_m,y_m:h.y_m,radius_m:h.radius_m,kind:h.kind==='terrain'?'terrain':'dust',severity:Number(h.severity)||1}));buildHazards();await replan('Hazards updated')},
@@ -593,16 +695,19 @@ async function boot(){
     apiReady=Boolean(info.ok);
   }catch{apiReady=false}
   if(apiReady){
-    for(const id of ['hazard-dust','hazard-terrain','hazard-clear','hazard-undo']){const element=$(id);if(element)element.disabled=false}
+    for(const id of ['hazard-dust','hazard-terrain','hazard-clear','hazard-undo','sites-random','sites-all','sites-none']){const element=$(id);if(element)element.disabled=false}
     setHazardHint('Pick a hazard, then click the terrain. The Rust planner replans from the astronaut’s current position.');
+    setScienceHint('Randomize the site set, or pick which sites to visit.');
   }else{
-    for(const id of ['hazard-dust','hazard-terrain','hazard-clear','hazard-undo']){const element=$(id);if(element)element.disabled=true}
+    for(const id of ['hazard-dust','hazard-terrain','hazard-clear','hazard-undo','sites-random','sites-all','sites-none']){const element=$(id);if(element)element.disabled=true}
     setHazardHint('Offline replay. Run ./run_demo.sh for live hazard replanning.');
+    setScienceHint('Offline plan. Run ./run_demo.sh to regenerate sites and replan.');
   }
   try{
     const response=await fetch(`./plan.json?t=${Date.now()}`);
     if(!response.ok)throw Error(`HTTP ${response.status}`);
     setPlan(await response.json(),{focus:false});
+    setScienceHint(selectedSummary());
   }catch(error){
     console.warn('No plan.json yet - run `./run_demo.sh` from the repo root.',error);
     $('mission-status').textContent='No plan.json · run ./run_demo.sh';
