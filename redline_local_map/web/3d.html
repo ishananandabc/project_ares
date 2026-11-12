@@ -25,8 +25,9 @@ button.active{background:#ffd166;color:#1a1206;border-color:#ffd166;font-weight:
 button:disabled{opacity:.4;cursor:not-allowed}
 </style>
 <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/controls/OrbitControls.js":"./vendor/OrbitControls.js"}}</script></head><body><div id="view"></div>
-<div class="panel"><h1>REDLINE / 3D</h1><div class="sub">32 km × 40 km Gale DEM · registered HiRISE imagery</div>
+<div class="panel"><h1>REDLINE / 3D</h1><div class="sub" id="terrain-build">Loading terrain build…</div>
 <div class="row"><label for="exaggeration">Vertical scale</label><select id="exaggeration"><option value="1">1× actual</option><option value="2">2× exaggerated</option><option value="5">5× exaggerated</option></select></div>
+<div class="row"><label for="terrain-mode">Terrain display</label><select id="terrain-mode"><option value="imagery">Real imagery</option><option value="elevation">Elevation tint</option><option value="slope">Slope tint</option></select></div>
 <div id="warning"></div>
 <div class="row"><label><input id="safe-toggle" type="checkbox" checked> Return-safe region</label></div>
 <div class="row"><button id="top">Top down</button><button id="focus">Focus route</button><button id="reset">Reset view</button></div>
@@ -50,4 +51,4 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div class="bar"><label>Rover</label><i><b id="bar-rover_power"></b></i><span id="val-rover_power">–</span></div>
 <div class="bar"><label>Equipment</label><i><b id="bar-equipment_power"></b></i><span id="val-equipment_power">–</span></div></div>
 <div class="hint">Simulation time is compressed. Resource draw follows the planner's per-leg costs; the green region is the return-safe area for the current state. Press space to play or pause.</div></div>
-<div id="readout">Loading terrain…</div><script type="module" src="./3d.js?v=5"></script></body></html>
+<div id="readout">Loading terrain…</div><script type="module" src="./3d.js?v=regional-1"></script></body></html>

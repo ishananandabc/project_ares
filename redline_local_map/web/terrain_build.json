@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "build_id": "1fd2573fbb76",
+  "source_dem": {
+    "file": "data/raw/gale_dem_1m.tif",
+    "url": "https://planetarymaps.usgs.gov/mosaic/Mars/MSL/MSL_Gale_DEM_Mosaic_1m_v3.tif",
+    "width": 32980,
+    "height": 57440,
+    "nodata": -32767.0,
+    "transform": [
+      1.0,
+      0.0,
+      8127993.492786024,
+      0.0,
+      -1.0,
+      -244781.075189438
+    ],
+    "bounds": [
+      8127993.492786024,
+      -302221.075189438,
+      8160973.492786024,
+      -244781.075189438
+    ],
+    "resolution_m": 1,
+    "crs_wkt": "PROJCS[\"Mars_Equirectangular_clon0\",GEOGCS[\"GCS_Mars_2000_Sphere\",DATUM[\"Mars_2000_(Sphere)\",SPHEROID[\"Mars_2000_Sphere_IAU_IAG\",3396190,0],AUTHORITY[\"ESRI\",\"106971\"]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]"
+  },
+  "source_imagery": {
+    "file": "data/raw/gale_hirise_color.tif",
+    "url": "https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Mars/MSL/MSL_Gale_HiRISE-LRGB_78quads_sharp_cog.tif",
+    "width": 36000,
+    "height": 76000,
+    "transform": [
+      0.25,
+      0.0,
+      8140000.0,
+      0.0,
+      -0.25,
+      -270000.0
+    ],
+    "bounds": [
+      8140000.0,
+      -289000.0,
+      8149000.0,
+      -270000.0
+    ],
+    "resolution_m": 0.25,
+    "crs_wkt": "PROJCS[\"GCS_INTERPLANETARY,_MARS_2000_SPHERE\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unnamed\",3396190,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]"
+  },
+  "landing": {
+    "name": "Bradbury Landing",
+    "longitude_deg_east": 137.4417,
+    "latitude_deg": -4.5895,
+    "projected_x_m": 8146815.1945889965,
+    "projected_y_m": -272041.2242832139,
+    "absolute_elevation_m": -4501.0283203125,
+    "source_row": 27260,
+    "source_column": 18821
+  },
+  "mars_radius_m": 3396190.0,
+  "extent": {
+    "local_left_m": -18800.0,
+    "local_right_m": 14150.0,
+    "local_top_m": 27250.0,
+    "local_bottom_m": -30150.0,
+    "projected_left_m": 8128015.1945889965,
+    "projected_right_m": 8160965.1945889965,
+    "projected_top_m": -244791.2242832139,
+    "projected_bottom_m": -302191.2242832139,
+    "width_m": 32950.0,
+    "height_m": 57400.0
+  },
+  "computational": {
+    "cell_size_m": 10.0,
+    "width_cells": 3295,
+    "height_cells": 5740,
+    "grid_cell": "center",
+    "row_direction": "south",
+    "arrays": {
+      "elevation_m": "regional_elevation_m.npy",
+      "relative_elevation_m": "regional_relative_elevation_m.npy",
+      "slope_deg": "regional_slope_deg.npy",
+      "valid_mask": "regional_valid_mask.npy"
+    }
+  },
+  "display": {
+    "cell_size_m": 50.0,
+    "width_vertices": 660,
+    "height_vertices": 1149,
+    "grid_vertex": "projected left/top plus column/row times cell size",
+    "row_direction": "south",
+    "three_axes": {
+      "x": "east metres",
+      "y": "elevation relative to Bradbury metres",
+      "z": "north metres"
+    },
+    "query_encoding": "little-endian float32 interleaved absolute_elevation_m,slope_deg; NaN invalid"
+  },
+  "texture": {
+    "width_px": 3072,
+    "height_px": 5352,
+    "coverage_fraction": 0.09042496769120578
+  },
+  "files": {
+    "mesh": {
+      "file": "terrain-mesh-1fd2573fbb76.bin",
+      "sha256": "dd0ccde1b694751d3f7bc45e7a27db48d7351d12e6e77a75dbf7f3efb0818e9c",
+      "bytes": 3033360
+    },
+    "query": {
+      "file": "terrain-query-1fd2573fbb76.bin",
+      "sha256": "7e9f9e50f29d3918517bff842987606191fe13a339a3c284a52914ad9ea6ac0d",
+      "bytes": 6066720
+    },
+    "neutral": {
+      "file": "terrain-neutral-1fd2573fbb76.png",
+      "sha256": "110ddffede6701e5beeb7989e9f56e3c126dbc2e9eece4a5a92436faad31800d",
+      "bytes": 1414286
+    },
+    "elevation": {
+      "file": "terrain-elevation-1fd2573fbb76.png",
+      "sha256": "a7a014b7eb67d625a9ddb73c572bb5b883e45ab1153d5aaf32260eec5c04cf4c",
+      "bytes": 490218
+    },
+    "slope": {
+      "file": "terrain-slope-1fd2573fbb76.png",
+      "sha256": "8dd5b38caf123058776e628820e0f883e063997fbf031e84986cbe89ec4e4c35",
+      "bytes": 1530834
+    },
+    "hirise": {
+      "file": "terrain-hirise-1fd2573fbb76.png",
+      "sha256": "423497cd63da5f04e724adfc56292e884cb49fbf30e5535479d0cea4f814ed4f",
+      "bytes": 5457501
+    }
+  },
+  "validation": {
+    "valid_display_vertices": 620025,
+    "total_display_vertices": 758340,
+    "bradbury_display_relative_m": 0.0
+  }
+}

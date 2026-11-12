@@ -1,113 +1,54 @@
-# REDLINE Local Mars Map
+# REDLINE: Gale terrain and mission simulation
 
-This starter uses **download-once, preprocess-once, render-locally**.
+REDLINE uses a real USGS/JPL Gale DEM for the terrain and a smaller, registered HiRISE color mosaic where imagery exists. The 2D and 3D viewers load the same `web/terrain_build.json` manifest. Its visible build ID identifies the exact content-addressed assets loaded by both viewers.
 
-## Data sources
+## Run a cloned demo
 
-### Visual basemap (recommended)
-USGS/JPL Curiosity / Gale HiRISE color mosaic, Cloud-Optimized GeoTIFF (~1 GB):
-
-https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Mars/MSL/MSL_Gale_HiRISE-LRGB_78quads_sharp_cog.tif
-
-### Terrain DEM (optional but recommended for the routing team)
-USGS/JPL Gale merged DEM, 1 m/pixel (~3.6 GB):
-
-https://planetarymaps.usgs.gov/mosaic/Mars/MSL/MSL_Gale_DEM_Mosaic_1m_v3.tif
-
-## 1. Install dependencies
-
-Python 3.10+ recommended.
+The repository includes every browser terrain asset. No GeoTIFF download or Python setup is needed to **view** the demo:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install rasterio pyproj pillow numpy
+cd project_ares
+./run_demo.sh
 ```
 
-## 2. Download the imagery
-
-```bash
-bash scripts/download_data.sh imagery
-```
-
-Optional DEM:
-
-```bash
-bash scripts/download_data.sh dem
-```
-
-Or both:
-
-```bash
-bash scripts/download_data.sh all
-```
-
-## 3. Build the local mission map
-
-The default crop is a 12 km × 12 km square centered on Bradbury Landing.
-
-```bash
-python scripts/preprocess_basemap.py
-```
-
-This produces:
-
-- `web/map.webp`
-- `web/map_meta.json`
-
-The browser loads **one image**, so there are no remote map tile requests during the demo.
-
-## 4. (Optional) Build algorithm-ready terrain arrays
-
-After downloading the DEM:
-
-```bash
-python scripts/preprocess_dem.py
-```
-
-This produces:
-
-- `data/processed/dem.npy`
-- `data/processed/slope_deg.npy`
-- `data/processed/terrain_meta.json`
-
-The default algorithm grid is 5 m/cell and covers the same 12 km × 12 km mission region.
-
-## 5. Run the local viewer
-
-For an offline replay of the generated `plan.json` (no live replanning):
+Open [2D viewer](http://localhost:8000/) or [3D viewer](http://localhost:8000/3d.html). `PORT=9000 ./run_demo.sh` selects another port. The Rust server provides live hazard replanning; a static server provides offline playback with the committed `plan.json`:
 
 ```bash
 python3 -m http.server 8000 -d redline_local_map/web
 ```
 
-Open:
+In the 3D viewer, the initial camera shows the full regional terrain. **Focus route** zooms to the mission; **Reset view** returns to the region. The panel shows the build ID, extent, and mesh resolution. The 2D viewer shows the same build ID. Select imagery, elevation, or slope tint. HiRISE covers only part of the DEM; neutral material represents DEM where that high-resolution image is unavailable. Missing DEM is empty/dark.
 
-http://localhost:8000/3d.html
+## Source data and rebuilding
 
-## Run the complete Rust + viewer demo
-
-From the repository root:
+The large original GeoTIFFs are intentionally ignored by Git. Download them only to regenerate assets:
 
 ```bash
-./run_demo.sh
+cd redline_local_map
+python3 -m venv .venv
+source .venv/bin/activate
+pip install numpy rasterio pillow pyproj
+bash scripts/download_data.sh all
+python scripts/build_terrain.py
+python scripts/validate_terrain.py
 ```
 
-This builds the Rust planner, writes the default `web/plan.json`, and starts a small local server that serves both viewers plus the replanning API:
+Sources:
 
-```text
-3D mission simulation: http://localhost:8000/3d.html
-2D map:                http://localhost:8000/
-Live replanning API:   POST http://localhost:8000/api/plan
-```
+- [MSL Gale Merged DEM v3, 1 m](https://planetarymaps.usgs.gov/mosaic/Mars/MSL/MSL_Gale_DEM_Mosaic_1m_v3.tif), local `data/raw/gale_dem_1m.tif` (~3.6 GB).
+- [Gale HiRISE color mosaic, 0.25 m](https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Mars/MSL/MSL_Gale_HiRISE-LRGB_78quads_sharp_cog.tif), local `data/raw/gale_hirise_color.tif` (~1 GB).
 
-Set a different port with `PORT=9000 ./run_demo.sh`. To run the server directly:
+`build_terrain.py` is the one command that rebuilds all **regional browser terrain** from these raw sources. It writes 10 m computational arrays under ignored `data/processed/` and content-addressed mesh, query, tint, hillshade, and registered HiRISE assets under `web/`. Commit `web/terrain_build.json` and every file it names, plus the viewer code. The manifest includes file hashes and byte counts; the browser checks the mesh and query hashes on load. Changing a terrain asset creates a new build ID and filenames, so an old browser cache cannot silently mix builds.
 
-```bash
-cargo run --release -- --serve 8000
-```
+The older tracked `web/terrain.bin` and `web/terrain_meta.json` are the Rust planner's **local 12 km demo input**, generated with `python scripts/preprocess_dem.py`. They are not loaded by the 2D or 3D regional viewers. The 5 m local arrays and new 10 m regional arrays in `data/processed/` are computational data; the 50 m visualization mesh is never used for routing.
 
-The planner uses a 200 m coarse grid for the demo (60 × 60 cells). The 5 m arrays remain the authoritative terrain inputs for production routing; this demo uses the coarse grid and the synthetic cost model.
+Superseded `web/terrain3d.*`, `web/hirise_registered.*`, and `web/map.*` assets remain tracked for now, but neither viewer requests them. The active assets are only those named by `web/terrain_build.json`. The older preprocessing scripts remain in the tree for compatibility; `scripts/build_terrain.py` is the regional build entrypoint.
+
+## Terrain coordinate contract
+
+Bradbury Landing is REDLINE `(0,0)`; +x is east, +y is north, metres. The source CRS places it at projected `(8146815.194589, -272041.224283)` m, and the original 1 m DEM sample is about `-4501.0283` m. The regional view spans **32.95 km east–west × 57.4 km north–south**: E −18,800 to +14,150 m, N −30,150 to +27,250 m. Nodata at the edges remains missing.
+
+The Three.js frame is X=east, Z=north, Y=elevation relative to Bradbury. The 3D mesh has 660 × 1149 vertices at 50 m spacing. The 2D base, 3D mesh, browser queries, and imagery registration all derive from the same manifest. The original DEM and image have different footprints and are aligned by projected metres, never raster pixel numbers.
 
 ## Science stops (S1–S5)
 
@@ -125,7 +66,7 @@ Each stop has a confidence-weighted reward and a visit cost in time, oxygen, rov
 
 ## 3D mission simulation
 
-`web/3d.html` renders the plan on the 32 × 40 km Gale DEM instead of the 2D basemap. It loads `plan.json` and drapes everything onto the terrain mesh:
+`web/3d.html` renders the plan on the 32.95 × 57.4 km Gale DEM. It loads `plan.json` and drapes everything onto the terrain mesh:
 
 - **Route** — amber ribbon following elevation (not a flat line), sampled at half the DEM step.
 - **Stops** — orange pins with labels; they turn green when the astronaut samples them. Their dwell time is the stop's visit cost.
@@ -221,47 +162,8 @@ window.REDLINE.setAstronaut(120, -45);
 
 Later, the same functions can be called from WebSocket/API updates.
 
-## Why this architecture
+## Terrain API and limits
 
-The visual map is static mission data and should not depend on internet availability during a live demo.
-The returnability envelope is dynamic and remains a lightweight vector overlay.
+Both viewers expose `REDLINE.setAstronaut(east_m,north_m)`, `REDLINE.setEnvelope([{x_m,y_m},...])`, and `REDLINE.terrainAt(east_m,north_m)`. Terrain queries return `valid`, `nodata`, `outside_processed`, or `outside_dataset`; valid results include absolute elevation, relative elevation, slope, and imagery availability. The 2D viewer also exposes route, stop, safe-region, and tint controls. The 3D viewer preserves mission playback, hazard replanning, camera controls, and 1×/2×/5× vertical scale. At 1× all geometry axes are in metres.
 
-The DEM is kept separately as numeric terrain data so the routing algorithm can operate on actual elevation/slope values without coupling itself to the visual basemap.
-
-## Terrain preprocessing and viewer
-
-Run `source .venv/bin/activate && python scripts/preprocess_dem.py` from the project root. The script reads the DEM in its native projected Mars CRS and creates a Bradbury-centered 12 km × 12 km, 5 m grid in `data/processed/`. Cell centers are at `left + (column + 0.5) * 5` east and `top - (row + 0.5) * 5` north. Invalid cells have NaN elevation and slope; the validity mask is saved separately. Slope uses valid cardinal neighbors only. Relative elevation uses the exact DEM sample at Bradbury (−4501.0283 m).
-
-The viewer loads a 20 m sample grid from `web/terrain.bin` (2.88 MB) for cursor readouts and optional elevation/slope tints. It does not download the full routing grid. Serve the `web/` directory over HTTP, for example `python -m http.server 8000 -d web`, then open `http://localhost:8000`.
-
-Browser integration API: `REDLINE.setAstronaut(east_m, north_m)`, `REDLINE.setEnvelope([{x_m, y_m}, ...])`, `REDLINE.terrainAt(east_m, north_m)` (returns `{elevation, slope}` or `null`), and `REDLINE.setTerrainOverlay('none' | 'elevation' | 'slope')`.
-
-Route and plan rendering API:
-
-```js
-REDLINE.setRoute([{x_m: 0, y_m: 0}, {x_m: 120, y_m: 40}, ...]);
-REDLINE.setStops([{x_m: 120, y_m: 40, label: "Stop 1"}, ...]);
-REDLINE.setSafeRegion({
-  left_m: -6000, top_m: 6000, cell_size_m: 20,
-  width: 600, height: 600, cells: [0, 1, 1, 0, ...]
-});
-
-// One-call form for a plan produced by the Rust core.
-REDLINE.setPlan({
-  route: [{x_m: 0, y_m: 0}, ...],
-  stops: [{x_m: 120, y_m: 40, label: "Stop 1"}, ...],
-  safe_region: {left_m: -6000, top_m: 6000, cell_size_m: 20, width: 600, height: 600, cells: [...]},
-  astronaut: {x_m: 0, y_m: 0},
-  envelope: [{x_m: -800, y_m: 500}, ...]
-});
-```
-
-All coordinates use the same local `(east, north)` metre frame as `terrain.bin`. `cells` is row-major from the top-left of `safe_region`, matching the DEM grid convention. The 5 m arrays are the authoritative terrain inputs for production routing; the Rust demo uses a coarse planning grid and a synthetic cost model that should be replaced by the mission cost model.
-
-## Separate 3D terrain viewer
-
-Run `source .venv/bin/activate && python scripts/preprocess_3d.py` from the project root after the 5 m terrain preprocessing. This creates a 32 km east–west × 40 km north–south, 801 × 1001 display mesh (`web/terrain3d.bin`), a matching 3200 × 4000 georegistered texture from the original full HiRISE mosaic (`web/hirise_registered.png`), an extended inspection grid (`web/terrain3d_query.bin`), and `web/terrain3d_meta.json`. The extent runs from local E −18 km to +14 km and N −20 km to +20 km, staying inside the DEM. HiRISE covers only its actual overlapping footprint. The original processed arrays remain the source for future routing. The 3D viewer uses local east as Three.js X, north as Three.js Z, and elevation relative to Bradbury as Three.js Y. At 1× vertical scale, all axes use metres.
-
-Serve `web/` with `python -m http.server 8765 -d web` and open `http://localhost:8765/3d.html`. Drag to orbit, right drag to pan, scroll to zoom, and click terrain to inspect coordinates, elevation and slope. The scale control offers 1×, 2× and 5×; the latter two explicitly identify visual exaggeration. `window.REDLINE.setAstronaut(east_m,north_m)` and `window.REDLINE.setEnvelope([{x_m,y_m},...])` are available to a future planner. `window.REDLINE.terrainAt(east_m,north_m)` returns a status of `valid`, `nodata`, or `outside` plus measurements when valid. The current 2D viewer remains at `index.html`.
-
-The HiRISE texture is sampled using the original GeoTIFF transform and internal validity mask, and has transparent pixels outside imagery coverage. Neutral DEM material shows through there. The browser mesh is visual only and is not used for routing or resource calculations. Three.js and OrbitControls are vendored under `web/vendor/` (Three.js 0.180.0).
+The regional DEM is nearly the maximum useful rectangle inside the available 1 m source. It has genuine nodata gaps near its edges. The HiRISE mosaic is only 9 × 19 km and covers about 9% of the regional footprint. Adding detailed imagery or terrain outside these sources requires another correctly registered NASA/USGS dataset.

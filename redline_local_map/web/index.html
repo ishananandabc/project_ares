@@ -12,32 +12,29 @@ border:1px solid #ffffff20;border-radius:14px;padding:15px 16px;backdrop-filter:
 padding:9px 12px;border-radius:10px;font-size:12px;border:1px solid #ffffff1c}
 </style></head><body>
 <canvas id="map"></canvas>
-<div class="hud"><div class="brand">REDLINE</div><div class="sub">Verified Bradbury Landing crop</div>
+<div class="hud"><div class="brand">REDLINE</div><div class="sub" id="terrain-build">Loading regional terrain…</div>
 <div class="row"><span>Origin</span><strong>Bradbury Landing</strong></div>
 <div class="row"><span>NASA position</span><strong>4.5895°S, 137.4417°E</strong></div>
-<div class="row"><span>Crop method</span><strong class="ok">USGS footprint ✓</strong></div>
+<div class="row"><span>Terrain</span><strong class="ok">Real Gale DEM ✓</strong></div>
 <div class="row"><span>Local frame</span><strong>metres (E, N)</strong></div>
 <div class="row"><span>3D simulation</span><a href="./3d.html" style="color:#9ddfff">Open terrain viewer →</a></div></div>
 <div class="status" id="status">Loading…</div><select id="terrain-layer" aria-label="Terrain overlay" style="position:fixed;right:18px;top:18px;z-index:10;background:#090d10;color:white;padding:9px;border-radius:8px"><option value="none">Imagery</option><option value="elevation">Elevation tint</option><option value="slope">Slope tint</option></select>
-<script>
+<script type="module">
+import {loadTerrainBuild,sampleTerrain} from './terrain-core.js';
 (async()=>{
 const c=document.querySelector("canvas"),ctx=c.getContext("2d"),status=document.querySelector("#status");
-const m=await fetch("./map_meta.json?fixed=1").then(r=>r.json());
-const img=new Image();img.src="./map.webp?fixed=1";await img.decode();
-const B={xmin_m:m.crop.local_left_m,xmax_m:m.crop.local_right_m,ymin_m:m.crop.local_bottom_m,ymax_m:m.crop.local_top_m};
+const {manifest:m,url:terrainUrl,query:terrain}=await loadTerrainBuild();
+document.querySelector('#terrain-build').textContent=`Build ${m.build_id} · ${(m.extent.width_m/1000).toFixed(2)} × ${(m.extent.height_m/1000).toFixed(1)} km`;
+const img=new Image(),hiRise=new Image();img.src=terrainUrl('neutral');hiRise.src=terrainUrl('hirise');await Promise.all([img.decode(),hiRise.decode()]);
+const B={xmin_m:m.extent.local_left_m,xmax_m:m.extent.local_right_m,ymin_m:m.extent.local_bottom_m,ymax_m:m.extent.local_top_m};
 const R=m.mars_radius_m,rad=180/Math.PI;
-let terrain=null, terrainMeta=null, overlayMode="none", overlayCanvas=null;
-try { terrainMeta=await fetch("./terrain_meta.json").then(r=>{if(!r.ok)throw Error(r.status);return r.json()});
-const raw=await fetch("./terrain.bin").then(r=>{if(!r.ok)throw Error(r.status);return r.arrayBuffer()});
-terrain=new DataView(raw); if(raw.byteLength!==terrainMeta.browser.width_cells*terrainMeta.browser.height_cells*8)throw Error("Terrain size mismatch");
-} catch(e) { console.warn("Terrain unavailable",e); }
-function terrainAt(x,y){if(!terrain)return null;const b=terrainMeta.browser;const col=Math.floor((x-b.local_left_m)/b.cell_size_m),row=Math.floor((b.local_top_m-y)/b.cell_size_m);
-if(col<0||row<0||col>=b.width_cells||row>=b.height_cells)return null;const offset=(row*b.width_cells+col)*8;
-const elevation=terrain.getFloat32(offset,true),slope=terrain.getFloat32(offset+4,true);
-return Number.isFinite(elevation)?{elevation,slope}:null;}
-function makeOverlay(){if(!terrain)return;const b=terrainMeta.browser;overlayCanvas=document.createElement("canvas");overlayCanvas.width=b.width_cells;overlayCanvas.height=b.height_cells;
-const o=overlayCanvas.getContext("2d"),pixels=o.createImageData(b.width_cells,b.height_cells),landing=terrainMeta.landing.absolute_elevation_m;
-for(let i=0;i<b.width_cells*b.height_cells;i++){const z=terrain.getFloat32(i*8,true),slope=terrain.getFloat32(i*8+4,true);if(!Number.isFinite(z))continue;let r,g,bl;if(overlayMode==="slope"){let t=Math.min(1,Math.max(0,slope/30));r=255*t;g=210*(1-t);bl=40;}else{let t=Math.min(1,Math.max(0,(z-landing+100)/200));r=230*t;g=130*(1-Math.abs(2*t-1));bl=240*(1-t)}const k=i*4;pixels.data[k]=r;pixels.data[k+1]=g;pixels.data[k+2]=bl;pixels.data[k+3]=125}o.putImageData(pixels,0,0)}
+let overlayMode="none",overlayImage=null,imageMaskContext=null;
+function hasHiRise(x,y){const b=m.source_imagery.bounds,px=m.landing.projected_x_m+x,py=m.landing.projected_y_m+y;if(px<b[0]||px>=b[2]||py<=b[1]||py>b[3])return false;
+if(!imageMaskContext){const cv=document.createElement('canvas');cv.width=hiRise.width;cv.height=hiRise.height;imageMaskContext=cv.getContext('2d',{willReadFrequently:true});imageMaskContext.drawImage(hiRise,0,0)}
+const col=Math.floor((x-B.xmin_m)/(B.xmax_m-B.xmin_m)*hiRise.width),row=Math.floor((B.ymax_m-y)/(B.ymax_m-B.ymin_m)*hiRise.height);
+return col>=0&&row>=0&&col<hiRise.width&&row<hiRise.height&&imageMaskContext.getImageData(col,row,1,1).data[3]>0}
+function terrainAt(x,y){const result=sampleTerrain(m,terrain,x,y);if(result.status==='valid')result.imagery=hasHiRise(x,y)?'HiRISE':'no_high_resolution_imagery';return result}
+function makeOverlay(){overlayImage=new Image();overlayImage.src=terrainUrl(overlayMode);overlayImage.decode().then(draw)}
 function makeSafeCanvas(mask){if(!mask||!mask.width||!mask.height)return null;const cv=document.createElement("canvas");cv.width=mask.width;cv.height=mask.height;const o=cv.getContext("2d"),pix=o.createImageData(mask.width,mask.height),cells=mask.cells||[];for(let i=0;i<mask.width*mask.height;i++){if(!cells[i])continue;const k=i*4;pix.data[k]=0;pix.data[k+1]=255;pix.data[k+2]=120;pix.data[k+3]=70}o.putImageData(pix,0,0);return cv}
 let s=1,ox=0,oy=0,drag=false,lx=0,ly=0;
 const astronaut={x_m:0,y_m:0}; let envelope=[], route=[], routeStops=[], safeMask=null, safeCanvas=null;
@@ -49,8 +46,8 @@ y:oy+(1-(y-B.ymin_m)/(B.ymax_m-B.ymin_m))*img.height*s}}
 function sm(x,y){let u=((x-ox)/s)/img.width,v=((y-oy)/s)/img.height;
 return{x_m:B.xmin_m+u*(B.xmax_m-B.xmin_m),y_m:B.ymin_m+(1-v)*(B.ymax_m-B.ymin_m),inside:u>=0&&u<=1&&v>=0&&v<=1,
 lon:(m.landing.projected_x_m+B.xmin_m+u*(B.xmax_m-B.xmin_m))/R*rad,lat:(m.landing.projected_y_m+B.ymin_m+(1-v)*(B.ymax_m-B.ymin_m))/R*rad}}
-function draw(){ctx.clearRect(0,0,innerWidth,innerHeight);ctx.drawImage(img,ox,oy,img.width*s,img.height*s);
-if(overlayMode!=="none"&&overlayCanvas){const a=ms(terrainMeta.browser.local_left_m,terrainMeta.browser.local_top_m),b=ms(terrainMeta.browser.local_left_m+terrainMeta.browser.width_cells*terrainMeta.browser.cell_size_m,terrainMeta.browser.local_top_m-terrainMeta.browser.height_cells*terrainMeta.browser.cell_size_m);ctx.save();ctx.beginPath();ctx.rect(ox,oy,img.width*s,img.height*s);ctx.clip();ctx.drawImage(overlayCanvas,a.x,a.y,b.x-a.x,b.y-a.y);ctx.restore()}
+function draw(){ctx.clearRect(0,0,innerWidth,innerHeight);ctx.drawImage(img,ox,oy,img.width*s,img.height*s);if(overlayMode==='none')ctx.drawImage(hiRise,ox,oy,img.width*s,img.height*s);
+if(overlayMode!=="none"&&overlayImage?.complete)ctx.drawImage(overlayImage,ox,oy,img.width*s,img.height*s);
 if(safeCanvas){const a=ms(safeMask.left_m,safeMask.top_m),b=ms(safeMask.left_m+safeMask.width*safeMask.cell_size_m,safeMask.top_m-safeMask.height*safeMask.cell_size_m);ctx.save();ctx.beginPath();ctx.rect(ox,oy,img.width*s,img.height*s);ctx.clip();ctx.drawImage(safeCanvas,a.x,a.y,b.x-a.x,b.y-a.y);ctx.restore()}
 if(envelope.length>2){ctx.beginPath();envelope.forEach((p,i)=>{let q=ms(p.x_m,p.y_m);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});
 ctx.closePath();ctx.fillStyle="#00e67622";ctx.strokeStyle="#00ff80";ctx.lineWidth=3;ctx.fill();ctx.stroke()}
@@ -64,9 +61,9 @@ c.onwheel=e=>{e.preventDefault();let bx=(e.clientX-ox)/s,by=(e.clientY-oy)/s,f=M
 ox=e.clientX-bx*ns;oy=e.clientY-by*ns;s=ns;draw()}
 c.onmousedown=e=>{drag=true;lx=e.clientX;ly=e.clientY};onmouseup=()=>drag=false;
 onmousemove=e=>{if(drag){ox+=e.clientX-lx;oy+=e.clientY-ly;lx=e.clientX;ly=e.clientY;draw()}
-let q=sm(e.clientX,e.clientY);const t=q.inside?terrainAt(q.x_m,q.y_m):null,rel=t?t.elevation-terrainMeta.landing.absolute_elevation_m:null;status.textContent=`E ${q.x_m.toFixed(0)} m · N ${q.y_m.toFixed(0)} m · ${Math.abs(q.lat).toFixed(5)}°${q.lat<0?"S":"N"} · ${q.lon.toFixed(5)}°E · Elevation ${t?t.elevation.toFixed(1)+" m":q.inside?"—":"outside imagery"} · Relative ${t?(rel>=0?"+":"")+rel.toFixed(1)+" m":"—"} · Slope ${t&&Number.isFinite(t.slope)?t.slope.toFixed(1)+"°":"—"}`}
+let q=sm(e.clientX,e.clientY),t=terrainAt(q.x_m,q.y_m);status.textContent=`E ${q.x_m.toFixed(0)} m · N ${q.y_m.toFixed(0)} m · ${Math.abs(q.lat).toFixed(5)}°${q.lat<0?"S":"N"} · ${q.lon.toFixed(5)}°E · ${t.status==='valid'?`Elevation ${t.elevation.toFixed(1)} m · Relative ${t.relative>=0?'+':''}${t.relative.toFixed(1)} m · Slope ${Number.isFinite(t.slope)?t.slope.toFixed(1)+'°':'—'} · ${t.imagery==='HiRISE'?'HiRISE':'No high-resolution imagery'}`:t.status==='nodata'?'DEM nodata':t.status==='outside_dataset'?'Outside DEM dataset':'Outside processed region'}`}
 window.REDLINE={setEnvelope:p=>{envelope=p||[];draw()},setAstronaut:(x,y)=>{astronaut.x_m=x;astronaut.y_m=y;draw()},setRoute:r=>{route=r||[];draw()},setStops:s=>{routeStops=s||[];draw()},setSafeRegion:m=>{safeMask=m||null;safeCanvas=makeSafeCanvas(safeMask);draw()},setPlan:plan=>{plan=plan||{};route=plan.route||[];routeStops=plan.stops||[];safeMask=plan.safe_region||null;safeCanvas=makeSafeCanvas(safeMask);if(plan.astronaut!==undefined){astronaut.x_m=plan.astronaut.x_m||0;astronaut.y_m=plan.astronaut.y_m||0}if(plan.envelope!==undefined)envelope=plan.envelope||[];draw()},fit:()=>{fit();draw()},terrainAt,setTerrainOverlay:mode=>{if(!["none","elevation","slope"].includes(mode))throw Error("Unknown overlay");overlayMode=mode;if(mode!=="none")makeOverlay();draw()}};
 fetch("./plan.json").then(r=>{if(!r.ok)throw Error(r.status);return r.json()}).then(p=>window.REDLINE.setPlan(p)).catch(e=>console.warn("No plan.json yet - run `cargo run --release` from the repo root.",e));
-document.querySelector("#terrain-layer").onchange=e=>window.REDLINE.setTerrainOverlay(e.target.value);onresize=resize;resize();
+document.querySelector("#terrain-layer").onchange=e=>window.REDLINE.setTerrainOverlay(e.target.value);onresize=resize;resize();status.textContent='Move the pointer over terrain to inspect it.';
 })();
 </script></body></html>

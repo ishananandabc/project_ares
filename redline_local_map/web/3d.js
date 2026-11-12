@@ -1,19 +1,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { loadTerrainBuild, sampleTerrain } from './terrain-core.js';
 const $=id=>document.getElementById(id), readout=$('readout');
-const [meta, terrainMeta, heightsBuffer, queryBuffer, extendedQueryBuffer] = await Promise.all([
-  fetch('./terrain3d_meta.json').then(checkJson),fetch('./terrain_meta.json').then(checkJson),
-  fetch('./terrain3d.bin').then(checkBuffer),fetch('./terrain.bin').then(checkBuffer),fetch('./terrain3d_query.bin').then(checkBuffer)
-]);
-function checkJson(r){if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json()}
-function checkBuffer(r){if(!r.ok)throw Error(`HTTP ${r.status}`);return r.arrayBuffer()}
-const cols=meta.mesh.width_vertices, rows=meta.mesh.height_vertices, step=meta.mesh.step_m, left=meta.mesh.local_left_m, top=meta.mesh.local_top_m, heights=new Float32Array(heightsBuffer), query=new DataView(queryBuffer), extendedQuery=new DataView(extendedQueryBuffer);
-if(heights.length!==rows*cols || query.byteLength!==terrainMeta.browser.width_cells*terrainMeta.browser.height_cells*8 || extendedQuery.byteLength!==rows*cols*8)throw Error('Terrain asset size mismatch');
+const {manifest:meta,url:terrainUrl,mesh:heights,query}=await loadTerrainBuild();
+const cols=meta.display.width_vertices,rows=meta.display.height_vertices,step=meta.display.cell_size_m;
+const left=meta.extent.local_left_m,top=meta.extent.local_top_m;
+const buildInfo=$('terrain-build');
+if(buildInfo)buildInfo.textContent=`Build ${meta.build_id} · ${(meta.extent.width_m/1000).toFixed(2)} × ${(meta.extent.height_m/1000).toFixed(1)} km · ${cols} × ${rows} mesh`;
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x11171a);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,1,100000);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;$('view').appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=25;controls.maxDistance=110000;controls.maxPolarAngle=Math.PI/2-.015;
-function reset(){camera.position.set(12500,17000,29000);controls.target.set(-2000,0,0);controls.update()}
+function reset(){camera.position.set(18000,33000,48000);controls.target.set((left+meta.extent.local_right_m)/2,0,(top+meta.extent.local_bottom_m)/2);controls.update()}
 reset();
 scene.add(new THREE.HemisphereLight(0xffffff,0x56504b,2.1));const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(-3500,7000,4500);scene.add(sun);
 const world=new THREE.Group();scene.add(world);
@@ -25,7 +23,10 @@ for(let r=0;r<rows-1;r++)for(let c=0;c<cols-1;c++){const a=r*cols+c,b=a+1,d=a+co
 }
 const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.BufferAttribute(uvs,2));geometry.setIndex(indices);geometry.computeVertexNormals();
 const baseMaterial=new THREE.MeshStandardMaterial({color:0x8b7666,roughness:1,side:THREE.DoubleSide});const base=new THREE.Mesh(geometry,baseMaterial);world.add(base);
-const texture=await new THREE.TextureLoader().loadAsync('./'+meta.texture.file);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+const textureLoader=new THREE.TextureLoader();
+const [texture,neutralTexture,elevationTexture,slopeTexture]=await Promise.all(['hirise','neutral','elevation','slope'].map(name=>textureLoader.loadAsync(terrainUrl(name))));
+for(const t of [texture,neutralTexture,elevationTexture,slopeTexture]){t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())}
+baseMaterial.color.setHex(0xffffff);baseMaterial.map=neutralTexture;baseMaterial.needsUpdate=true;
 const imageMaterial=new THREE.MeshStandardMaterial({map:texture,transparent:true,alphaTest:.05,roughness:1,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});const imagery=new THREE.Mesh(geometry,imageMaterial);imagery.raycast=()=>{};world.add(imagery);
 function terrainHeight(x,z){const c=(x-left)/step,r=(top-z)/step;if(c<0||r<0||c>cols-1||r>rows-1)return null;const c0=Math.min(cols-2,Math.floor(c)),r0=Math.min(rows-2,Math.floor(r)),u=c-c0,v=r-r0;const a=heights[r0*cols+c0],b=heights[r0*cols+c0+1],d=heights[(r0+1)*cols+c0],e=heights[(r0+1)*cols+c0+1];return [a,b,d,e].every(Number.isFinite)?(1-v)*((1-u)*a+u*b)+v*((1-u)*d+u*e):null}
 function marker(color,radius){const mesh=new THREE.Mesh(new THREE.SphereGeometry(radius,16,12),new THREE.MeshBasicMaterial({color,depthTest:true}));world.add(mesh);return mesh}
@@ -52,25 +53,19 @@ function setEnvelope(points){envelope=points||[];if(envelopeLine){world.remove(e
  const coords=[];for(let i=0;i<envelope.length;i++){const a=envelope[i],b=envelope[(i+1)%envelope.length],length=Math.hypot(b.x_m-a.x_m,b.y_m-a.y_m),segments=Math.max(1,Math.ceil(length/step));for(let k=0;k<segments;k++){const t=k/segments,x=a.x_m+(b.x_m-a.x_m)*t,z=a.y_m+(b.y_m-a.y_m)*t,h=terrainHeight(x,z);if(h!==null)coords.push(x,h+8,z)}}
  if(coords.length<6)return;coords.push(coords[0],coords[1],coords[2]);envelopeLine=new THREE.Line(new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(coords,3)),new THREE.LineBasicMaterial({color:0x33ff96,linewidth:2,depthTest:true}));world.add(envelopeLine)
 }
-function terrainAt(x,north){
- const b=terrainMeta.browser;
- // Preserve the finer 20 m terrain query inside the original operating area.
- if(x>=b.local_left_m&&north<=b.local_top_m&&x<b.local_left_m+b.width_cells*b.cell_size_m&&north>b.local_top_m-b.height_cells*b.cell_size_m){
-  const c=Math.floor((x-b.local_left_m)/b.cell_size_m),r=Math.floor((b.local_top_m-north)/b.cell_size_m),o=(r*b.width_cells+c)*8;
-  const elevation=query.getFloat32(o,true),slope=query.getFloat32(o+4,true);
-  return Number.isFinite(elevation)?{status:'valid',elevation,relative:elevation-meta.landing.absolute_elevation_m,slope,resolution_m:b.cell_size_m}:{status:'nodata'};
- }
- const e=meta.terrain_query;
- if(x<e.local_left_m||north>e.local_top_m||x>e.local_left_m+(e.width_cells-1)*e.cell_size_m||north<e.local_top_m-(e.height_cells-1)*e.cell_size_m)return {status:'outside'};
- const c=Math.min(e.width_cells-1,Math.max(0,Math.round((x-e.local_left_m)/e.cell_size_m)));
- const r=Math.min(e.height_cells-1,Math.max(0,Math.round((e.local_top_m-north)/e.cell_size_m)));
- const o=(r*e.width_cells+c)*8,elevation=extendedQuery.getFloat32(o,true),slope=extendedQuery.getFloat32(o+4,true);
- return Number.isFinite(elevation)?{status:'valid',elevation,relative:elevation-meta.landing.absolute_elevation_m,slope,resolution_m:e.cell_size_m}:{status:'nodata'};
+let imageMaskContext=null;
+function hasHiRise(x,north){
+ const b=meta.source_imagery.bounds,px=meta.landing.projected_x_m+x,py=meta.landing.projected_y_m+north;
+ if(px<b[0]||px>=b[2]||py<=b[1]||py>b[3])return false;
+ if(!imageMaskContext){const canvas=document.createElement('canvas');canvas.width=meta.texture.width_px;canvas.height=meta.texture.height_px;imageMaskContext=canvas.getContext('2d',{willReadFrequently:true});imageMaskContext.drawImage(texture.image,0,0)}
+ const c=Math.floor((x-left)/meta.extent.width_m*meta.texture.width_px),r=Math.floor((top-north)/meta.extent.height_m*meta.texture.height_px);
+ return c>=0&&r>=0&&c<meta.texture.width_px&&r<meta.texture.height_px&&imageMaskContext.getImageData(c,r,1,1).data[3]>0;
 }
+function terrainAt(x,north){const result=sampleTerrain(meta,query,x,north);if(result.status==='valid')result.imagery=hasHiRise(x,north)?'HiRISE':'no_high_resolution_imagery';return result}
 
 // ---------------------------------------------------------------- mission --
 // Coordinate contract: route points, stops and safe regions all arrive in the
-// same local metre frame as terrain.bin / terrain3d.bin (+x east, +y north).
+// same local metre frame as terrain_build.json (+x east, +y north).
 // Everything below is draped onto terrainHeight, so the overlays follow the DEM.
 const RESOURCE_KEYS=['time_s','oxygen','rover_power','equipment_power'];
 const ROUTE_LIFT=10, SAFE_LIFT=6, SAFE_MAX_AXIS=256;
@@ -607,7 +602,7 @@ async function boot(){
   try{
     const response=await fetch(`./plan.json?t=${Date.now()}`);
     if(!response.ok)throw Error(`HTTP ${response.status}`);
-    setPlan(await response.json());
+    setPlan(await response.json(),{focus:false});
   }catch(error){
     console.warn('No plan.json yet - run `./run_demo.sh` from the repo root.',error);
     $('mission-status').textContent='No plan.json · run ./run_demo.sh';
@@ -630,12 +625,13 @@ renderer.domElement.addEventListener('pointerup',async e=>{
     await placeHazard(hazardMode,hit.point.x,hit.point.z);
     return;
   }
-  if(!hit){const plane=new THREE.Plane(new THREE.Vector3(0,1,0),0),point=new THREE.Vector3();if(raycaster.ray.intersectPlane(plane,point)){const status=terrainAt(point.x,point.z).status;readout.textContent=status==='nodata'?'DEM nodata':status==='outside'?'Outside processed terrain':'No terrain intersection at this view'}else readout.textContent='No terrain intersection at this view';return}const x=hit.point.x,z=hit.point.z,t=terrainAt(x,z),rad=180/Math.PI,lon=(meta.landing.projected_x_m+x)/meta.mars_radius_m*rad,lat=(meta.landing.projected_y_m+z)/meta.mars_radius_m*rad;
- readout.innerHTML=`E ${x.toFixed(0)} m · N ${z.toFixed(0)} m<br>${Math.abs(lat).toFixed(5)}°${lat<0?'S':'N'} · ${lon.toFixed(5)}°E<br>${t.status==='valid'?`Elevation ${t.elevation.toFixed(1)} m · Relative ${t.relative>=0?'+':''}${t.relative.toFixed(1)} m<br>Slope ${Number.isFinite(t.slope)?t.slope.toFixed(1)+'°':'unavailable'}`:t.status==='nodata'?'DEM nodata':'Outside processed terrain'}`
+  if(!hit){const plane=new THREE.Plane(new THREE.Vector3(0,1,0),0),point=new THREE.Vector3();if(raycaster.ray.intersectPlane(plane,point)){const status=terrainAt(point.x,point.z).status;readout.textContent=status==='nodata'?'DEM nodata':status==='outside_dataset'?'Outside DEM dataset':status==='outside_processed'?'Outside processed region':'No terrain intersection at this view'}else readout.textContent='No terrain intersection at this view';return}const x=hit.point.x,z=hit.point.z,t=terrainAt(x,z),rad=180/Math.PI,lon=(meta.landing.projected_x_m+x)/meta.mars_radius_m*rad,lat=(meta.landing.projected_y_m+z)/meta.mars_radius_m*rad;
+ readout.innerHTML=`E ${x.toFixed(0)} m · N ${z.toFixed(0)} m<br>${Math.abs(lat).toFixed(5)}°${lat<0?'S':'N'} · ${lon.toFixed(5)}°E<br>${t.status==='valid'?`Elevation ${t.elevation.toFixed(1)} m · Relative ${t.relative>=0?'+':''}${t.relative.toFixed(1)} m<br>Slope ${Number.isFinite(t.slope)?t.slope.toFixed(1)+'°':'unavailable'} · ${t.imagery==='HiRISE'?'HiRISE imagery':'No high-resolution imagery'}`:t.status==='nodata'?'DEM nodata':t.status==='outside_dataset'?'Outside DEM dataset':'Outside processed region'}`
 });
 $('exaggeration').onchange=e=>{const factor=Number(e.target.value);world.scale.y=factor;$('warning').textContent=factor===1?'':`${factor}× vertical exaggeration · heights visually amplified`};
-$('wire').onchange=e=>{baseMaterial.wireframe=e.target.checked;imagery.visible=!e.target.checked};
-$('top').onclick=()=>{camera.position.set(-2000,50000,1);controls.target.set(-2000,0,0);controls.update()};$('reset').onclick=reset;
+$('wire').onchange=e=>{baseMaterial.wireframe=e.target.checked;imagery.visible=!e.target.checked&&$('terrain-mode').value==='imagery'};
+$('terrain-mode').onchange=e=>{const mode=e.target.value;baseMaterial.map=mode==='elevation'?elevationTexture:mode==='slope'?slopeTexture:neutralTexture;baseMaterial.needsUpdate=true;imagery.visible=mode==='imagery'&&!$('wire').checked};
+$('top').onclick=()=>{const cx=(left+meta.extent.local_right_m)/2,cz=(top+meta.extent.local_bottom_m)/2;camera.position.set(cx,75000,cz+1);controls.target.set(cx,0,cz);controls.update()};$('reset').onclick=reset;
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 addEventListener('keydown',event=>{if(event.code==='Space'&&event.target.tagName!=='INPUT'&&event.target.tagName!=='SELECT'){event.preventDefault();togglePlay()}});
 readout.textContent='Click the terrain to inspect coordinates, elevation, and slope.';
