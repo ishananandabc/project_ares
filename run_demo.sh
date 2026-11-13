@@ -9,4 +9,4 @@ PORT="${PORT:-8000}"
 echo "Starting the REDLINE planner and viewer server on port ${PORT} ..."
 echo "The first start builds the release binary."
 echo
-exec cargo run --release -- --serve "$PORT"
+exec cargo run --release -- --serve "$PORT" "$@"

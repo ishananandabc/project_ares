@@ -30,14 +30,11 @@ const MAX_HAZARD_SEVERITY: f64 = 2.0;
 const TOTAL_RESOURCES: ResourceVector = ResourceVector::new(32_000.0, 30.0, 900.0, 16.0);
 const RESERVE: ResourceVector = ResourceVector::new(6_0.0, 5.0, 150.0, 2.5);
 
-/// Science stops in local metres, east/north from Bradbury Landing.
-const STOP_OFFSETS: [(f64, f64); 5] = [
-    (-3000.0, 1000.0),  // S1
-    (1500.0, 1500.0),   // S2
-    (1800.0, -1500.0),  // S3
-    (-1500.0, -3000.0), // S4
-    (500.0, 500.0),     // S5
-];
+const SITE_RADIUS_M: f64 = 4_200.0;
+const SITE_MIN_DISTANCE_M: f64 = 700.0;
+const SITE_MIN_SPACING_M: f64 = 750.0;
+const SITE_MAX_SLOPE_DEG: f64 = 15.0;
+const SITE_COUNT: usize = 10;
 
 const NEIGHBOURS: [(isize, isize); 8] = [
     (-1, -1),
@@ -58,6 +55,9 @@ struct Terrain {
     width: usize,
     height: usize,
     valid: Vec<bool>,
+    elevation: Vec<f64>,
+    relief_m: Vec<f64>,
+    slope_deg: Vec<f64>,
     positions: Vec<Position>,
     edges: Vec<BaseEdge>,
 }
@@ -101,6 +101,7 @@ impl Terrain {
 
         let mut valid = vec![false; width * height];
         let mut slope_deg = vec![0.0; width * height];
+        let mut elevation = vec![f64::NAN; width * height];
         let mut positions = vec![Position::new(0.0, 0.0); width * height];
 
         for row in 0..height {
@@ -112,10 +113,38 @@ impl Terrain {
                 );
                 let sample_row = (row * STRIDE + STRIDE / 2).min(sample_height - 1);
                 let sample_col = (col * STRIDE + STRIDE / 2).min(sample_width - 1);
-                if let Some((_, slope)) = sample(sample_row, sample_col) {
+                if let Some((height_m, slope)) = sample(sample_row, sample_col) {
                     valid[id] = true;
                     slope_deg[id] = slope;
+                    elevation[id] = height_m;
                 }
+            }
+        }
+
+        let mut relief_m = vec![0.0; width * height];
+        for row in 0..height {
+            for col in 0..width {
+                let id = node(row, col);
+                if !valid[id] {
+                    continue;
+                }
+                let mut low = f64::INFINITY;
+                let mut high = f64::NEG_INFINITY;
+                for d_row in -2..=2 {
+                    for d_col in -2..=2 {
+                        let r = row as isize + d_row;
+                        let c = col as isize + d_col;
+                        if r < 0 || c < 0 || r >= height as isize || c >= width as isize {
+                            continue;
+                        }
+                        let neighbour = node(r as usize, c as usize);
+                        if valid[neighbour] {
+                            low = low.min(elevation[neighbour]);
+                            high = high.max(elevation[neighbour]);
+                        }
+                    }
+                }
+                relief_m[id] = high - low;
             }
         }
         let mut edges = Vec::new();
@@ -160,6 +189,9 @@ impl Terrain {
             width,
             height,
             valid,
+            elevation,
+            relief_m,
+            slope_deg,
             positions,
             edges,
         })
@@ -203,6 +235,299 @@ impl Terrain {
         }
         best
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Activity {
+    code: &'static str,
+    label: &'static str,
+    value: f64,
+    time_s: f64,
+    oxygen: f64,
+    rover_power: f64,
+    equipment_power: f64,
+}
+
+const ACTIVITIES: [Activity; 5] = [
+    Activity {
+        code: "stratigraphy",
+        label: "Layered outcrop",
+        value: 14.0,
+        time_s: 700.0,
+        oxygen: 0.55,
+        rover_power: 7.5,
+        equipment_power: 0.12,
+    },
+    Activity {
+        code: "clay_basin",
+        label: "Clay-bearing basin",
+        value: 12.5,
+        time_s: 620.0,
+        oxygen: 0.48,
+        rover_power: 5.0,
+        equipment_power: 0.18,
+    },
+    Activity {
+        code: "vein_survey",
+        label: "Fracture and vein survey",
+        value: 9.5,
+        time_s: 480.0,
+        oxygen: 0.38,
+        rover_power: 4.5,
+        equipment_power: 0.14,
+    },
+    Activity {
+        code: "overlook",
+        label: "Ridge overlook",
+        value: 7.5,
+        time_s: 420.0,
+        oxygen: 0.30,
+        rover_power: 3.5,
+        equipment_power: 0.08,
+    },
+    Activity {
+        code: "regolith",
+        label: "Regolith sample",
+        value: 6.0,
+        time_s: 340.0,
+        oxygen: 0.25,
+        rover_power: 3.0,
+        equipment_power: 0.10,
+    },
+];
+
+#[derive(Clone, Debug)]
+struct Site {
+    id: usize,
+    node: usize,
+    x_m: f64,
+    y_m: f64,
+    activity: Activity,
+    value: f64,
+    confidence: f64,
+}
+
+impl Site {
+    fn reward(&self) -> f64 {
+        self.value * self.confidence
+    }
+
+    fn visit_costs(&self) -> RiskCosts {
+        let base = ResourceVector::new(
+            self.activity.time_s,
+            self.activity.oxygen,
+            self.activity.rover_power,
+            self.activity.equipment_power,
+        );
+        RiskCosts::new(base, base.scale(1.25), base.scale(2.0))
+    }
+
+    fn json(&self, selected: bool) -> Value {
+        let round = |value: f64| (value * 100.0).round() / 100.0;
+        json!({
+            "id": self.id,
+            "label": self.activity.label,
+            "activity": self.activity.code,
+            "x_m": self.x_m,
+            "y_m": self.y_m,
+            "reward": round(self.reward()),
+            "confidence": round(self.confidence),
+            "visit": resources_json(self.visit_costs().at(RiskLevel::Neutral)),
+            "selected": selected,
+        })
+    }
+}
+
+fn random_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64 & 0x7fff_ffff)
+        .unwrap_or(0x5eed_1e55)
+}
+
+fn seed_from_args(args: &[String]) -> u64 {
+    if let Some(index) = args.iter().position(|arg| arg == "--seed")
+        && let Some(seed) = args.get(index + 1).and_then(|value| value.parse().ok())
+    {
+        return seed;
+    }
+    if let Ok(value) = std::env::var("REDLINE_SEED")
+        && let Ok(seed) = value.parse()
+    {
+        return seed;
+    }
+    random_seed()
+}
+
+fn split_mix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+fn unit(state: &mut u64) -> f64 {
+    (split_mix(state) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+fn between(state: &mut u64, low: f64, high: f64) -> f64 {
+    low + (high - low) * unit(state)
+}
+
+fn quantile(pool: &[usize], value: impl Fn(usize) -> f64, fraction: f64) -> f64 {
+    let mut values = pool.iter().map(|&id| value(id)).collect::<Vec<_>>();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if values.is_empty() {
+        return 0.0;
+    }
+    let index = ((values.len() - 1) as f64 * fraction).round() as usize;
+    values[index]
+}
+
+fn generate_sites(terrain: &Terrain, seed: u64) -> Vec<Site> {
+    let pool = (0..terrain.width * terrain.height)
+        .filter(|&id| {
+            if !terrain.valid[id] || terrain.slope_deg[id] > SITE_MAX_SLOPE_DEG {
+                return false;
+            }
+            let position = terrain.positions[id];
+            let distance = position.x_m.hypot(position.y_m);
+            (SITE_MIN_DISTANCE_M..=SITE_RADIUS_M).contains(&distance)
+        })
+        .collect::<Vec<_>>();
+    if pool.is_empty() {
+        return Vec::new();
+    }
+
+    let slope_mid = quantile(&pool, |id| terrain.slope_deg[id], 0.5);
+
+    let mut state = seed;
+    let mut chosen: Vec<usize> = Vec::new();
+    for _ in 0..4_000 {
+        if chosen.len() == SITE_COUNT {
+            break;
+        }
+        let node = pool[(split_mix(&mut state) % pool.len() as u64) as usize];
+        let position = terrain.positions[node];
+        let spaced = chosen.iter().all(|&other| {
+            let other_position = terrain.positions[other];
+            (position.x_m - other_position.x_m).hypot(position.y_m - other_position.y_m)
+                >= SITE_MIN_SPACING_M
+        });
+        if spaced {
+            chosen.push(node);
+        }
+    }
+
+    let mut activities = vec![None; chosen.len()];
+    let order = |key: &dyn Fn(usize) -> f64, descending: bool| {
+        let mut indices = (0..chosen.len()).collect::<Vec<_>>();
+        indices.sort_by(|a, b| {
+            let left = key(chosen[*a]);
+            let right = key(chosen[*b]);
+            if descending {
+                right.partial_cmp(&left)
+            } else {
+                left.partial_cmp(&right)
+            }
+            .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        indices
+    };
+    let mut claim = |indices: Vec<usize>, count: usize, activity: Activity| {
+        let mut taken = 0;
+        for index in indices {
+            if taken == count {
+                break;
+            }
+            if activities[index].is_none() {
+                activities[index] = Some(activity);
+                taken += 1;
+            }
+        }
+    };
+
+    let mut quotas = [2usize; ACTIVITIES.len()];
+    let mut shuffled = [0usize, 1, 2, 3, 4];
+    for index in (1..shuffled.len()).rev() {
+        let swap = (split_mix(&mut state) % (index as u64 + 1)) as usize;
+        shuffled.swap(index, swap);
+    }
+    quotas[shuffled[0]] = 3;
+    quotas[shuffled[4]] = 1;
+
+    claim(
+        order(&|node| terrain.relief_m[node], true),
+        quotas[0],
+        ACTIVITIES[0],
+    );
+    claim(
+        order(&|node| terrain.elevation[node], true),
+        quotas[3],
+        ACTIVITIES[3],
+    );
+    let mut low_flats = order(&|node| terrain.elevation[node], false);
+    low_flats.retain(|index| terrain.slope_deg[chosen[*index]] <= slope_mid);
+    claim(low_flats, quotas[1], ACTIVITIES[1]);
+    claim(
+        order(&|node| terrain.relief_m[node], false),
+        quotas[4],
+        ACTIVITIES[4],
+    );
+    claim(
+        order(&|node| terrain.elevation[node], false),
+        quotas[2],
+        ACTIVITIES[2],
+    );
+    for slot in activities.iter_mut() {
+        if slot.is_none() {
+            *slot = Some(ACTIVITIES[2]);
+        }
+    }
+
+    chosen
+        .into_iter()
+        .zip(activities)
+        .enumerate()
+        .map(|(index, (node, activity))| {
+            let activity = activity.expect("every site receives an activity");
+            let position = terrain.positions[node];
+            Site {
+                id: index + 1,
+                node,
+                x_m: position.x_m,
+                y_m: position.y_m,
+                activity,
+                value: activity.value * between(&mut state, 0.88, 1.14),
+                confidence: between(&mut state, 0.62, 0.95),
+            }
+        })
+        .collect()
+}
+
+fn science_sites(
+    terrain: &Terrain,
+    request: &PlanRequest,
+) -> Result<(u64, Vec<Site>, Vec<usize>), String> {
+    let seed = request.seed.unwrap_or_default();
+    let sites = generate_sites(terrain, seed);
+    let selected = match &request.site_ids {
+        Some(ids) => {
+            let mut seen = Vec::new();
+            for &id in ids {
+                if !sites.iter().any(|site| site.id == id) {
+                    return Err(format!("unknown science site {id} for seed {seed}"));
+                }
+                if !seen.contains(&id) {
+                    seen.push(id);
+                }
+            }
+            seen
+        }
+        None => sites.iter().map(|site| site.id).collect(),
+    };
+    Ok((seed, sites, selected))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -261,6 +586,10 @@ struct PlanRequest {
     #[serde(default)]
     hazards: Vec<Hazard>,
     #[serde(default)]
+    seed: Option<u64>,
+    #[serde(default)]
+    site_ids: Option<Vec<usize>>,
+    #[serde(default)]
     start: Option<PointRequest>,
     #[serde(default)]
     spent_before: Option<SpentRequest>,
@@ -276,26 +605,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let terrain = Terrain::load(&web)?;
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let seed = seed_from_args(&args);
+    let request = PlanRequest {
+        seed: Some(seed),
+        ..PlanRequest::default()
+    };
     if let Some(index) = args.iter().position(|arg| arg == "--serve") {
         let port = args
             .get(index + 1)
             .and_then(|value| value.parse().ok())
             .unwrap_or(8000);
-        let plan = build_plan(&terrain, &PlanRequest::default())
-            .map_err(Box::<dyn std::error::Error>::from)?;
+        let plan = build_plan(&terrain, &request).map_err(Box::<dyn std::error::Error>::from)?;
         fs::write(web.join("plan.json"), serde_json::to_vec_pretty(&plan)?)?;
         print_plan_summary(&plan);
         println!();
         println!("3D mission simulation: http://localhost:{port}/3d.html");
         println!("2D map:                http://localhost:{port}/");
         println!("Live replanning API:   POST http://localhost:{port}/api/plan");
+        println!("Science site API:      GET  http://localhost:{port}/api/sites?seed={seed}");
+        println!("Reproduce this site set with REDLINE_SEED={seed} ./run_demo.sh");
         println!("Press Ctrl-C to stop.");
         serve(Arc::new(terrain), web, port)?;
         return Ok(());
     }
 
-    let plan = build_plan(&terrain, &PlanRequest::default())
-        .map_err(Box::<dyn std::error::Error>::from)?;
+    let plan = build_plan(&terrain, &request).map_err(Box::<dyn std::error::Error>::from)?;
     fs::write(web.join("plan.json"), serde_json::to_vec_pretty(&plan)?)?;
     println!("Wrote {}", web.join("plan.json").display());
     print_plan_summary(&plan);
@@ -337,6 +671,12 @@ fn print_plan_summary(plan: &Value) {
         mission["used"]["oxygen"].as_f64().unwrap_or(0.0),
         mission["used"]["rover_power"].as_f64().unwrap_or(0.0),
         mission["used"]["equipment_power"].as_f64().unwrap_or(0.0)
+    );
+    println!(
+        "Science seed {}: {} of {} candidate sites selected",
+        mission["seed"].as_u64().unwrap_or(0),
+        mission["stop_ids"].as_array().map(Vec::len).unwrap_or(0),
+        mission["sites_total"].as_u64().unwrap_or(0)
     );
     println!("Route stops: {stops} rendered stop markers");
 }
@@ -381,29 +721,21 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
     };
     let safehouses = vec![home];
 
+    let (seed, sites, selected) = science_sites(terrain, request)?;
     let mut stops = Vec::new();
-    for (index, (x_m, y_m)) in STOP_OFFSETS.into_iter().enumerate() {
-        let id = index + 1;
-        if request.visited_stop_ids.contains(&id) {
+    for site in &sites {
+        if !selected.contains(&site.id) || request.visited_stop_ids.contains(&site.id) {
             continue;
         }
-        let Some(stop_node) = terrain.nearest_node(x_m, y_m) else {
-            continue;
-        };
-        if stop_node == start {
+        if site.node == start {
             continue;
         }
-        let value = 8.0 + index as f64 * 2.0;
         stops.push(ScienceStop {
-            id,
-            node: stop_node,
-            expected_value: RiskValues::new(value, value, value * 0.8),
-            confidence: 0.9,
-            visit_costs: RiskCosts::new(
-                ResourceVector::new(400.0, 0.4, 4.0, 0.1),
-                ResourceVector::new(500.0, 0.5, 5.0, 0.12),
-                ResourceVector::new(800.0, 0.8, 8.0, 0.2),
-            ),
+            id: site.id,
+            node: site.node,
+            expected_value: RiskValues::new(site.value, site.value, site.value * 0.8),
+            confidence: site.confidence,
+            visit_costs: site.visit_costs(),
         });
     }
 
@@ -538,7 +870,15 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
             "return_risk": risk_label(plan.return_risk),
             "stop_ids": plan.stop_ids,
             "stops_visited": plan.stop_ids.len(),
-            "stops_total": STOP_OFFSETS.len(),
+            "stops_total": request
+                .visited_stop_ids
+                .iter()
+                .filter(|id| selected.contains(id))
+                .count()
+                + plan.stop_ids.len(),
+            "sites_total": sites.len(),
+            "sites_selected": selected.len(),
+            "seed": seed,
             "resources": resources_json(TOTAL_RESOURCES),
             "reserve": resources_json(RESERVE),
             "spent_before": resources_json(spent_before),
@@ -550,6 +890,13 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
             "grid_height": terrain.height,
             "grid_cell_m": terrain.cell_m,
             "valid_cells": terrain.valid.iter().filter(|valid| **valid).count(),
+        },
+        "science": {
+            "seed": seed,
+            "selected": selected,
+            "sites": sites.iter().map(|site| {
+                site.json(selected.contains(&site.id))
+            }).collect::<Vec<_>>(),
         },
         "astronaut": {"x_m": start_position.x_m, "y_m": start_position.y_m},
     }))
@@ -778,15 +1125,41 @@ fn handle_connection(mut stream: TcpStream, terrain: &Terrain, web: &Path) -> st
         reader.read_exact(&mut body)?;
     }
 
-    let path = target.split('?').next().unwrap_or("/");
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path, query),
+        None => (target.as_str(), ""),
+    };
 
     if method == "GET" && path == "/api/health" {
         let payload = json!({
             "ok": true,
             "hazards": true,
+            "sites": true,
             "grid_width": terrain.width,
             "grid_height": terrain.height,
             "grid_cell_m": terrain.cell_m,
+        });
+        return respond(
+            &mut stream,
+            200,
+            "OK",
+            "application/json",
+            payload.to_string().as_bytes(),
+        );
+    }
+
+    if method == "GET" && path == "/api/sites" {
+        let seed = query
+            .split('&')
+            .find_map(|part| part.strip_prefix("seed="))
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_else(random_seed);
+        let sites = generate_sites(terrain, seed);
+        let payload = json!({
+            "seed": seed,
+            "count": sites.len(),
+            "selected": sites.iter().map(|site| site.id).collect::<Vec<_>>(),
+            "sites": sites.iter().map(|site| site.json(true)).collect::<Vec<_>>(),
         });
         return respond(
             &mut stream,
@@ -940,5 +1313,117 @@ mod tests {
             0.0,
         );
         assert!((two[0] - one[0] * one[0]).abs() < 1.0e-12);
+    }
+
+    fn demo_terrain() -> Terrain {
+        Terrain::load(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("redline_local_map")
+                .join("web"),
+        )
+        .expect("demo terrain assets")
+    }
+
+    #[test]
+    fn science_sites_repeat_for_the_same_seed() {
+        let terrain = demo_terrain();
+        let first = generate_sites(&terrain, 42);
+        let second = generate_sites(&terrain, 42);
+        assert_eq!(first.len(), SITE_COUNT);
+        assert_eq!(
+            first
+                .iter()
+                .map(|site| (site.id, site.node))
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|site| (site.id, site.node))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_new_seed_moves_the_site_set() {
+        let terrain = demo_terrain();
+        let first = generate_sites(&terrain, 42);
+        let second = generate_sites(&terrain, 43);
+        assert_ne!(
+            first.iter().map(|site| site.node).collect::<Vec<_>>(),
+            second.iter().map(|site| site.node).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sites_stay_inside_the_region_and_apart() {
+        let terrain = demo_terrain();
+        let sites = generate_sites(&terrain, 7);
+        assert!(!sites.is_empty());
+        for site in &sites {
+            let distance = site.x_m.hypot(site.y_m);
+            assert!((SITE_MIN_DISTANCE_M..=SITE_RADIUS_M + terrain.cell_m).contains(&distance));
+            assert!(terrain.valid[site.node]);
+        }
+        for (index, site) in sites.iter().enumerate() {
+            for other in &sites[index + 1..] {
+                let gap = (site.x_m - other.x_m).hypot(site.y_m - other.y_m);
+                assert!(gap >= SITE_MIN_SPACING_M);
+            }
+        }
+    }
+
+    #[test]
+    fn selection_limits_the_planned_stops() {
+        let terrain = demo_terrain();
+        let sites = generate_sites(&terrain, 11);
+        let chosen = vec![sites[0].id, sites[3].id];
+        let request = PlanRequest {
+            seed: Some(11),
+            site_ids: Some(chosen.clone()),
+            ..PlanRequest::default()
+        };
+        let plan = build_plan(&terrain, &request).expect("plan for two sites");
+        let stops = plan["stops"].as_array().expect("stops");
+        assert!(stops.len() <= chosen.len());
+        assert!(
+            plan["mission"]["stops_total"]
+                .as_u64()
+                .expect("stops total")
+                <= 2
+        );
+        assert_eq!(plan["mission"]["sites_selected"].as_u64(), Some(2));
+        assert_eq!(
+            plan["mission"]["sites_total"].as_u64(),
+            Some(sites.len() as u64)
+        );
+        for stop in stops {
+            let id = stop["id"].as_u64().expect("stop id") as usize;
+            assert!(chosen.contains(&id));
+        }
+    }
+
+    #[test]
+    fn unknown_site_ids_are_rejected() {
+        let terrain = demo_terrain();
+        let request = PlanRequest {
+            seed: Some(11),
+            site_ids: Some(vec![999]),
+            ..PlanRequest::default()
+        };
+        let error = build_plan(&terrain, &request).expect_err("unknown site must fail");
+        assert!(error.contains("unknown science site 999"), "{error}");
+    }
+
+    #[test]
+    fn clearing_the_selection_returns_home_without_stops() {
+        let terrain = demo_terrain();
+        let request = PlanRequest {
+            seed: Some(11),
+            site_ids: Some(Vec::new()),
+            ..PlanRequest::default()
+        };
+        let plan = build_plan(&terrain, &request).expect("plan with no sites");
+        assert!(plan["stops"].as_array().expect("stops").is_empty());
+        assert_eq!(plan["mission"]["stops_total"].as_u64(), Some(0));
+        assert!(!plan["route"].as_array().expect("route").is_empty());
     }
 }
