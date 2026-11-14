@@ -1,0 +1,6 @@
+target/
+.git/
+.github/
+.firebase/
+*.png
+!redline_local_map/web/*.png
