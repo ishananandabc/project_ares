@@ -338,6 +338,8 @@ impl Site {
     }
 }
 
+const DEFAULT_SEED: u64 = 191289738;
+
 fn random_seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -347,16 +349,24 @@ fn random_seed() -> u64 {
 
 fn seed_from_args(args: &[String]) -> u64 {
     if let Some(index) = args.iter().position(|arg| arg == "--seed") {
-        if let Some(seed) = args.get(index + 1).and_then(|value| value.parse().ok()) {
-            return seed;
+        if let Some(value) = args.get(index + 1) {
+            if value == "random" {
+                return random_seed();
+            }
+            if let Ok(seed) = value.parse() {
+                return seed;
+            }
         }
     }
     if let Ok(value) = std::env::var("REDLINE_SEED") {
+        if value == "random" {
+            return random_seed();
+        }
         if let Ok(seed) = value.parse() {
             return seed;
         }
     }
-    random_seed()
+    DEFAULT_SEED
 }
 
 fn split_mix(state: &mut u64) -> u64 {
@@ -603,9 +613,21 @@ struct PlanRequest {
     objective: Option<String>,
 }
 
+fn resolve_web_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("REDLINE_WEB_DIR") {
+        return PathBuf::from(dir);
+    }
+    let local = PathBuf::from("redline_local_map").join("web");
+    if local.exists() {
+        return local;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("redline_local_map")
+        .join("web")
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let web = root.join("redline_local_map").join("web");
+    let web = resolve_web_dir();
     let terrain = Terrain::load(&web)?;
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -618,13 +640,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port = args
             .get(index + 1)
             .and_then(|value| value.parse().ok())
+            .or_else(|| std::env::var("PORT").ok().and_then(|v| v.parse().ok()))
             .unwrap_or(8000);
         let plan = build_plan(&terrain, &request).map_err(Box::<dyn std::error::Error>::from)?;
         fs::write(web.join("plan.json"), serde_json::to_vec_pretty(&plan)?)?;
         print_plan_summary(&plan);
         println!();
-        println!("3D mission simulation: http://localhost:{port}/3d.html");
-        println!("2D map:                http://localhost:{port}/");
+        println!("3D mission simulation: http://localhost:{port}/");
         println!("Live replanning API:   POST http://localhost:{port}/api/plan");
         println!("Science site API:      GET  http://localhost:{port}/api/sites?seed={seed}");
         println!("Reproduce this site set with REDLINE_SEED={seed} ./run_demo.sh");
@@ -1188,7 +1210,8 @@ fn terrain_cost(distance_m: f64, slope_deg: f64) -> RiskCosts {
 // -------------------------------------------------------------------- HTTP --
 
 fn serve(terrain: Arc<Terrain>, web: PathBuf, port: u16) -> std::io::Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let listener = TcpListener::bind((host.as_str(), port))?;
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
