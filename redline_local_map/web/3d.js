@@ -11,7 +11,7 @@ const scene=new THREE.Scene();scene.background=new THREE.Color(0x11171a);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,1,100000);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;$('view').appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=25;controls.maxDistance=110000;controls.maxPolarAngle=Math.PI/2-.015;
-function reset(){camera.position.set(18000,33000,48000);controls.target.set((left+meta.extent.local_right_m)/2,0,(top+meta.extent.local_bottom_m)/2);controls.update()}
+function reset(){if(typeof focusSelectedSites==='function')focusSelectedSites();else{camera.position.set(0,2500,3200);controls.target.set(0,0,0);controls.update()}}
 reset();
 scene.add(new THREE.HemisphereLight(0xffffff,0x56504b,2.1));const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(-3500,7000,4500);scene.add(sun);
 const world=new THREE.Group();scene.add(world);
@@ -198,7 +198,7 @@ function makeLabel(text,color){
   const g=canvas.getContext('2d');
   g.fillStyle='rgba(8,12,15,.78)';g.strokeStyle='rgba(255,255,255,.28)';g.lineWidth=3;
   g.beginPath();g.roundRect(4,4,312,88,18);g.fill();g.stroke();
-  g.font='600 54px system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=color;g.fillText(text,160,50);
+  g.font='600 54px "Roboto",system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=color;g.fillText(text,160,50);
   const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
   const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false}));
   sprite.scale.set(680,204,1);sprite.renderOrder=10;
@@ -823,16 +823,28 @@ function play(){if(missionDuration<=1)return;if(progress>=1)seek(0);playing=true
 function pause(){playing=false;$('play').textContent='▶ Play'}
 function togglePlay(){playing?pause():play()}
 
-function focusRoute(){
-  const points=[...routePoints.map(point=>({x:point.x_m,z:point.y_m})),...stops.map(stop=>({x:stop.x_m,z:stop.y_m}))];
-  if(!points.length)return;
+function focusSelectedSites(){
+  const selectedSites=(siteList||[]).filter(s=>(selectedSiteIds||[]).includes(s.id));
+  const points=selectedSites.length
+    ? [...selectedSites.map(s=>({x:s.x_m,z:s.y_m})),{x:0,z:0}]
+    : [...stops.map(s=>({x:s.x_m,z:s.y_m})),...routePoints.map(p=>({x:p.x_m,z:p.y_m})),{x:0,z:0}];
   let minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
-  for(const point of points){minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minZ=Math.min(minZ,point.z);maxZ=Math.max(maxZ,point.z)}
-  const cx=(minX+maxX)/2,cz=(minZ+maxZ)/2,span=Math.max(maxX-minX,maxZ-minZ,900),distance=Math.max(span*0.95,1400);
+  for(const p of points){
+    minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);
+    minZ=Math.min(minZ,p.z);maxZ=Math.max(maxZ,p.z);
+  }
+  if(!Number.isFinite(minX)){minX=-3000;maxX=3000;minZ=-3000;maxZ=3000}
+  const cx=(minX+maxX)/2,cz=(minZ+maxZ)/2;
+  const span=Math.max(maxX-minX,maxZ-minZ,1000);
+  const distance=Math.max(span*0.95,1400);
   const cy=(terrainHeight(cx,cz)??0)*world.scale.y;
   controls.target.set(cx,cy,cz);
   camera.position.set(cx+distance*0.32,cy+distance*0.92,cz+distance*0.78);
   controls.update();
+}
+
+function focusRoute(){
+  focusSelectedSites();
 }
 
 function setRoute(points){
@@ -1519,7 +1531,7 @@ async function boot(){
     if(!response.ok)throw Error(`HTTP ${response.status}`);
     const loadedPlan=await response.json();
     defaultPlan=structuredClone(loadedPlan);
-    setPlan(loadedPlan,{focus:false});
+    setPlan(loadedPlan,{focus:true});
     renderScenarioOptions();
     setScienceHint(selectedSummary());
   }catch(error){
@@ -1582,7 +1594,12 @@ function updateLayerLegend(mode){
 $('exaggeration').onchange=e=>{const factor=Number(e.target.value);world.scale.y=factor;$('warning').textContent=factor===1?'':`${factor}× vertical exaggeration · heights visually amplified`};
 $('wire').onchange=e=>{baseMaterial.wireframe=e.target.checked;imagery.visible=!e.target.checked&&$('terrain-mode').value==='imagery'};
 $('terrain-mode').onchange=e=>{const mode=e.target.value;baseMaterial.map=mode==='elevation'?elevationTexture:mode==='slope'?slopeTexture:neutralTexture;baseMaterial.needsUpdate=true;imagery.visible=mode==='imagery'&&!$('wire').checked;updateLayerLegend(mode)};
-$('top').onclick=()=>{const cx=(left+meta.extent.local_right_m)/2,cz=(top+meta.extent.local_bottom_m)/2;camera.position.set(cx,75000,cz+1);controls.target.set(cx,0,cz);controls.update()};$('reset').onclick=reset;
+$('top').onclick=()=>{
+  const dist=Math.max(controls.minDistance||25,camera.position.distanceTo(controls.target));
+  camera.position.set(controls.target.x,controls.target.y+dist,controls.target.z+Math.max(0.5,dist*0.0005));
+  controls.update();
+};
+$('reset').onclick=reset;
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);drawElevProfile()});
 addEventListener('keydown',event=>{
   if(event.code==='Escape'){

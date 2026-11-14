@@ -1,9 +1,12 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>REDLINE — Bradbury Landing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,400..700;1,400..700&family=Roboto:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07090b}
-body{font-family:Inter,system-ui,sans-serif}canvas{position:fixed;inset:0;width:100%;height:100%;cursor:grab}
+body{font-family:'Roboto',Inter,system-ui,sans-serif}canvas{position:fixed;inset:0;width:100%;height:100%;cursor:grab}
 .hud{position:fixed;z-index:10;left:18px;top:18px;width:330px;background:#090d10e8;color:#eef2f4;
 border:1px solid #ffffff20;border-radius:14px;padding:15px 16px;backdrop-filter:blur(12px)}
 .brand{font-weight:900;letter-spacing:.18em;font-size:19px}.sub{opacity:.62;font-size:12px;margin-top:3px}
@@ -52,9 +55,9 @@ if(safeCanvas){const a=ms(safeMask.left_m,safeMask.top_m),b=ms(safeMask.left_m+s
 if(envelope.length>2){ctx.beginPath();envelope.forEach((p,i)=>{let q=ms(p.x_m,p.y_m);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});
 ctx.closePath();ctx.fillStyle="#00e67622";ctx.strokeStyle="#00ff80";ctx.lineWidth=3;ctx.fill();ctx.stroke()}
 if(route.length>1){ctx.save();ctx.lineJoin="round";ctx.lineCap="round";const stroke=(color,width,dash)=>{ctx.beginPath();route.forEach((p,i)=>{const q=ms(p.x_m,p.y_m);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});ctx.setLineDash(dash||[]);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()};stroke("rgba(0,0,0,.7)",8,[]);stroke("#ffd166",4,[]);ctx.restore()}
-routeStops.forEach(s=>{const q=ms(s.x_m,s.y_m);ctx.beginPath();ctx.arc(q.x,q.y,5,0,Math.PI*2);ctx.fillStyle="#ff9f1c";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();if(s.label){ctx.fillStyle="#fff";ctx.font="600 12px system-ui";ctx.fillText(s.label,q.x+9,q.y-8)}});
+routeStops.forEach(s=>{const q=ms(s.x_m,s.y_m);ctx.beginPath();ctx.arc(q.x,q.y,5,0,Math.PI*2);ctx.fillStyle="#ff9f1c";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();if(s.label){ctx.fillStyle="#fff";ctx.font="600 12px 'Roboto', system-ui";ctx.fillText(s.label,q.x+9,q.y-8)}});
 let p=ms(0,0);ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);ctx.fillStyle="#ff3b30";ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.fill();ctx.stroke();
-ctx.fillStyle="#fff";ctx.font="600 12px system-ui";ctx.fillText("Bradbury Landing / origin",p.x+13,p.y-10);
+ctx.fillStyle="#fff";ctx.font="600 12px 'Roboto', system-ui";ctx.fillText("Bradbury Landing / origin",p.x+13,p.y-10);
 if(astronaut.x_m!==0||astronaut.y_m!==0){let a=ms(astronaut.x_m,astronaut.y_m);ctx.beginPath();ctx.arc(a.x,a.y,7,0,Math.PI*2);ctx.fillStyle="#4cf";ctx.fill();ctx.strokeStyle="#fff";ctx.stroke()}
 ctx.strokeStyle="#fff8";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(p.x-15,p.y);ctx.lineTo(p.x+15,p.y);ctx.moveTo(p.x,p.y-15);ctx.lineTo(p.x,p.y+15);ctx.stroke()}
 c.onwheel=e=>{e.preventDefault();let bx=(e.clientX-ox)/s,by=(e.clientY-oy)/s,f=Math.exp(-e.deltaY*.0014),ns=Math.max(.03,Math.min(s*f,20));
