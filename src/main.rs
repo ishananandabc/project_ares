@@ -346,15 +346,15 @@ fn random_seed() -> u64 {
 }
 
 fn seed_from_args(args: &[String]) -> u64 {
-    if let Some(index) = args.iter().position(|arg| arg == "--seed")
-        && let Some(seed) = args.get(index + 1).and_then(|value| value.parse().ok())
-    {
-        return seed;
+    if let Some(index) = args.iter().position(|arg| arg == "--seed") {
+        if let Some(seed) = args.get(index + 1).and_then(|value| value.parse().ok()) {
+            return seed;
+        }
     }
-    if let Ok(value) = std::env::var("REDLINE_SEED")
-        && let Ok(seed) = value.parse()
-    {
-        return seed;
+    if let Ok(value) = std::env::var("REDLINE_SEED") {
+        if let Ok(seed) = value.parse() {
+            return seed;
+        }
     }
     random_seed()
 }
@@ -597,6 +597,10 @@ struct PlanRequest {
     elapsed_s: f64,
     #[serde(default)]
     visited_stop_ids: Vec<usize>,
+    #[serde(default)]
+    risk: Option<String>,
+    #[serde(default)]
+    objective: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -739,10 +743,13 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
         });
     }
 
+    let risk = parse_risk(request.risk.as_deref())?;
+    let (objective_label, path_weights) = parse_objective(request.objective.as_deref())?;
+
     let config = PlannerConfig {
-        risk: RiskLevel::Neutral,
+        risk,
         return_risk: RiskLevel::Pessimistic,
-        path_weights: ResourceVector::new(1.0, 0.0, 0.0, 0.0),
+        path_weights,
         beam_width: 32,
         max_stops: stops.len(),
         max_labels_per_leg: 256,
@@ -841,11 +848,13 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
         .collect::<Vec<_>>();
 
     let start_position = graph.position(start).expect("start node has a position");
-    let frames = safe_region_frames(&safety, &segment_spent, available);
+    let usable = available.minus(RESERVE);
+    let cell_count = terrain.width * terrain.height;
+    let frames = safe_region_frames(&safety, cell_count, &segment_spent, usable);
     let final_mask = frames
         .last()
         .map(|frame| frame.mask.clone())
-        .unwrap_or_else(|| vec![false; terrain.width * terrain.height]);
+        .unwrap_or_else(|| vec![false; cell_count]);
 
     Ok(json!({
         "route": route,
@@ -860,7 +869,11 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
         },
         "safe_region_frames": frames
             .iter()
-            .map(|frame| json!({"t": frame.fraction, "cells": pack_bits(&frame.mask)}))
+            .map(|frame| json!({
+                "t": frame.fraction,
+                "cells": pack_bits(&frame.mask),
+                "ratios": bytes_to_hex(&frame.ratios),
+            }))
             .collect::<Vec<_>>(),
         "mission": {
             "reward": plan.expected_reward,
@@ -868,6 +881,7 @@ fn build_plan(terrain: &Terrain, request: &PlanRequest) -> Result<Value, String>
             "end_time_s": elapsed_before + duration_s,
             "risk": risk_label(plan.risk),
             "return_risk": risk_label(plan.return_risk),
+            "objective": objective_label,
             "stop_ids": plan.stop_ids,
             "stops_visited": plan.stop_ids.len(),
             "stops_total": request
@@ -947,20 +961,22 @@ fn scale_resources(value: ResourceVector, multiplier: [f64; 4]) -> ResourceVecto
     }))
 }
 
-/// One precomputed return-safe region at a fraction of the segment timeline.
+/// One precomputed return-safe region and utilization field along the segment timeline.
 struct SafeFrame {
     fraction: f64,
     mask: Vec<bool>,
+    ratios: Vec<u8>,
 }
 
-/// Samples the return-safe region along the segment so the viewer can shrink
-/// the overlay as resources are spent. Identical consecutive masks are merged.
+/// Samples the reserve-safe return region and normalized cost ratio along the
+/// segment so the viewer can animate multi-band isochrones continuously.
 fn safe_region_frames(
     safety: &Returnability,
+    cell_count: usize,
     spent: &[ResourceVector],
     resources: ResourceVector,
 ) -> Vec<SafeFrame> {
-    const FRAME_COUNT: usize = 12;
+    const FRAME_COUNT: usize = 45;
     let duration = spent.last().map(|value| value.time_s).unwrap_or(0.0);
     let mut frames: Vec<SafeFrame> = Vec::new();
     for index in 0..FRAME_COUNT {
@@ -971,13 +987,66 @@ fn safe_region_frames(
         };
         let spent_now = sample_spent(spent, duration * fraction);
         let remaining = resources.minus(spent_now);
-        let mask = safety.safe_region(remaining);
+        let (mask, ratios) = return_field(safety, cell_count, remaining);
         match frames.last() {
-            Some(previous) if previous.mask == mask => {}
-            _ => frames.push(SafeFrame { fraction, mask }),
+            Some(previous) if previous.mask == mask && previous.ratios == ratios => {}
+            _ => frames.push(SafeFrame {
+                fraction,
+                mask,
+                ratios,
+            }),
         }
     }
     frames
+}
+
+/// Computes the binary return-safe mask and quantized bottleneck return-cost ratio
+/// (`0..=200` for `0%..=100%` of `remaining`; `201..=255` for over-budget or unreachable).
+fn return_field(
+    safety: &Returnability,
+    cell_count: usize,
+    remaining: ResourceVector,
+) -> (Vec<bool>, Vec<u8>) {
+    let rem = remaining.components();
+    let mut mask = vec![false; cell_count];
+    let mut ratios = vec![255u8; cell_count];
+    for node in 0..cell_count {
+        let frontier = safety.return_frontier(node);
+        if frontier.is_empty() {
+            continue;
+        }
+        let mut safe = false;
+        let mut best_ratio = f64::INFINITY;
+        for cost in frontier {
+            if cost.fits_within(remaining) {
+                safe = true;
+            }
+            let comp = cost.components();
+            let ratio = (0..4)
+                .map(|i| {
+                    if comp[i] <= 0.0 {
+                        0.0
+                    } else if rem[i] <= 0.0 {
+                        f64::INFINITY
+                    } else {
+                        comp[i] / rem[i]
+                    }
+                })
+                .fold(0.0_f64, f64::max);
+            if ratio < best_ratio {
+                best_ratio = ratio;
+            }
+        }
+        mask[node] = safe;
+        ratios[node] = if safe {
+            (best_ratio * 200.0).round().clamp(0.0, 200.0) as u8
+        } else if best_ratio.is_finite() {
+            (best_ratio * 200.0).round().clamp(201.0, 254.0) as u8
+        } else {
+            255
+        };
+    }
+    (mask, ratios)
 }
 
 /// Linear interpolation of cumulative spend at a segment time.
@@ -1012,22 +1081,26 @@ fn lerp_resources(a: ResourceVector, b: ResourceVector, fraction: f64) -> Resour
     }))
 }
 
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut packed = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(packed, "{byte:02x}");
+    }
+    packed
+}
+
 /// Packs booleans little-endian into a lowercase hex string. The viewer
 /// decodes this back into the safe-region raster without a base64 dependency.
 fn pack_bits(mask: &[bool]) -> String {
-    use std::fmt::Write;
-
     let mut bytes = vec![0u8; mask.len().div_ceil(8)];
     for (index, &value) in mask.iter().enumerate() {
         if value {
             bytes[index / 8] |= 1 << (index % 8);
         }
     }
-    let mut packed = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(packed, "{byte:02x}");
-    }
-    packed
+    bytes_to_hex(&bytes)
 }
 
 fn resources_json(value: ResourceVector) -> Value {
@@ -1044,6 +1117,48 @@ fn risk_label(risk: RiskLevel) -> &'static str {
         RiskLevel::Optimistic => "Optimistic",
         RiskLevel::Neutral => "Neutral",
         RiskLevel::Pessimistic => "Pessimistic",
+    }
+}
+
+fn parse_risk(value: Option<&str>) -> Result<RiskLevel, String> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(RiskLevel::Neutral),
+        Some(v) if v.eq_ignore_ascii_case("optimistic") => Ok(RiskLevel::Optimistic),
+        Some(v) if v.eq_ignore_ascii_case("neutral") => Ok(RiskLevel::Neutral),
+        Some(v) if v.eq_ignore_ascii_case("pessimistic") => Ok(RiskLevel::Pessimistic),
+        Some(other) => Err(format!(
+            "unknown risk '{other}'; expected optimistic, neutral, or pessimistic"
+        )),
+    }
+}
+
+fn parse_objective(value: Option<&str>) -> Result<(&'static str, ResourceVector), String> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(("fastest", ResourceVector::new(1.0, 0.0, 0.0, 0.0))),
+        Some(v) if v.eq_ignore_ascii_case("fastest") => {
+            Ok(("fastest", ResourceVector::new(1.0, 0.0, 0.0, 0.0)))
+        }
+        Some(v) if v.eq_ignore_ascii_case("oxygen") => {
+            Ok(("oxygen", ResourceVector::new(0.0, 1.0, 0.0, 0.0)))
+        }
+        Some(v) if v.eq_ignore_ascii_case("rover") => {
+            Ok(("rover", ResourceVector::new(0.0, 0.0, 1.0, 0.0)))
+        }
+        Some(v) if v.eq_ignore_ascii_case("equipment") => {
+            Ok(("equipment", ResourceVector::new(0.0, 0.0, 0.0, 1.0)))
+        }
+        Some(v) if v.eq_ignore_ascii_case("balanced") => Ok((
+            "balanced",
+            ResourceVector::new(
+                1.0 / TOTAL_RESOURCES.time_s,
+                1.0 / TOTAL_RESOURCES.oxygen,
+                1.0 / TOTAL_RESOURCES.rover_power,
+                1.0 / TOTAL_RESOURCES.equipment_power,
+            ),
+        )),
+        Some(other) => Err(format!(
+            "unknown objective '{other}'; expected fastest, oxygen, rover, equipment, or balanced"
+        )),
     }
 }
 
@@ -1113,10 +1228,10 @@ fn handle_connection(mut stream: TcpStream, terrain: &Terrain, web: &Path) -> st
         if line.is_empty() {
             break;
         }
-        if let Some((name, value)) = line.split_once(':')
-            && name.eq_ignore_ascii_case("content-length")
-        {
-            content_length = value.trim().parse().unwrap_or(0);
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
         }
     }
 
@@ -1425,5 +1540,71 @@ mod tests {
         assert!(plan["stops"].as_array().expect("stops").is_empty());
         assert_eq!(plan["mission"]["stops_total"].as_u64(), Some(0));
         assert!(!plan["route"].as_array().expect("route").is_empty());
+    }
+
+    #[test]
+    fn risk_and_objective_options_are_applied_and_validated() {
+        let terrain = demo_terrain();
+        let request = PlanRequest {
+            seed: Some(11),
+            risk: Some("pessimistic".to_string()),
+            objective: Some("rover".to_string()),
+            ..PlanRequest::default()
+        };
+        let plan = build_plan(&terrain, &request).expect("pessimistic rover plan");
+        assert_eq!(plan["mission"]["risk"].as_str(), Some("Pessimistic"));
+        assert_eq!(plan["mission"]["objective"].as_str(), Some("rover"));
+
+        let bad_risk = PlanRequest {
+            seed: Some(11),
+            risk: Some("reckless".to_string()),
+            ..PlanRequest::default()
+        };
+        assert!(build_plan(&terrain, &bad_risk).is_err());
+
+        let bad_obj = PlanRequest {
+            seed: Some(11),
+            objective: Some("unknown".to_string()),
+            ..PlanRequest::default()
+        };
+        assert!(build_plan(&terrain, &bad_obj).is_err());
+    }
+
+    #[test]
+    fn safe_region_frames_emit_reserve_consistent_ratios() {
+        let terrain = demo_terrain();
+        let plan = build_plan(
+            &terrain,
+            &PlanRequest {
+                seed: Some(11),
+                ..PlanRequest::default()
+            },
+        )
+        .expect("default plan builds");
+        let frames = plan["safe_region_frames"]
+            .as_array()
+            .expect("safe_region_frames array");
+        assert!(frames.len() >= 10);
+        let cell_count = terrain.width * terrain.height;
+        let first_ratios = frames[0]["ratios"].as_str().expect("ratios hex");
+        let last_ratios = frames
+            .last()
+            .and_then(|frame| frame["ratios"].as_str())
+            .expect("last ratios hex");
+        assert_eq!(first_ratios.len(), cell_count * 2);
+        assert_eq!(last_ratios.len(), cell_count * 2);
+
+        let safe_count = |hex: &str| {
+            (0..cell_count)
+                .filter(|&i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap() <= 200)
+                .count()
+        };
+        let mid_count = |hex: &str| {
+            (0..cell_count)
+                .filter(|&i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap() <= 100)
+                .count()
+        };
+        assert!(mid_count(first_ratios) > mid_count(last_ratios));
+        assert!(safe_count(first_ratios) >= safe_count(last_ratios));
     }
 }
