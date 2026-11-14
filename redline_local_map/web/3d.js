@@ -11,7 +11,7 @@ const scene=new THREE.Scene();scene.background=new THREE.Color(0x11171a);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,1,100000);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;$('view').appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=25;controls.maxDistance=110000;controls.maxPolarAngle=Math.PI/2-.015;
-function reset(){if(typeof focusSelectedSites==='function')focusSelectedSites();else{camera.position.set(0,2500,3200);controls.target.set(0,0,0);controls.update()}}
+function reset(){camera.position.set(0,2500,3200);controls.target.set(0,0,0);controls.update()}
 reset();
 scene.add(new THREE.HemisphereLight(0xffffff,0x56504b,2.1));const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(-3500,7000,4500);scene.add(sun);
 const world=new THREE.Group();scene.add(world);
@@ -1501,7 +1501,7 @@ $('sc-sites-all').onclick=()=>{modalSelectedIds=modalSites.map(s=>s.id);renderMo
 $('sc-sites-none').onclick=()=>{modalSelectedIds=[];renderModalSiteList()};
 $('sc-run').onclick=saveAndRunModalScenario;
 
-window.REDLINE={setAstronaut:(x_m,y_m)=>{if(!Number.isFinite(x_m)||!Number.isFinite(y_m))throw Error('Expected metre coordinates');astronautXY=[x_m,y_m];placeAstronaut(x_m,y_m)},setEnvelope,terrainAt,resetView:reset,setPlan,setRoute,setStops,setSafeRegion,play,pause,seek,focusRoute,
+window.REDLINE={setAstronaut:(x_m,y_m)=>{if(!Number.isFinite(x_m)||!Number.isFinite(y_m))throw Error('Expected metre coordinates');astronautXY=[x_m,y_m];placeAstronaut(x_m,y_m)},setEnvelope,terrainAt,resetView:focusSelectedSites,setPlan,setRoute,setStops,setSafeRegion,play,pause,seek,focusRoute,
   setHazards:async list=>{hazards=(list||[]).filter(h=>Number.isFinite(h.x_m)&&Number.isFinite(h.y_m)&&h.radius_m>0).map(h=>({x_m:h.x_m,y_m:h.y_m,radius_m:h.radius_m,kind:h.kind==='terrain'?'terrain':'dust',severity:Number(h.severity)||1}));buildHazards();await replan('Hazards updated')},
   getHazards:()=>hazards.map(hazard=>({...hazard})),
   replenish:replenishResources,
@@ -1599,7 +1599,7 @@ $('top').onclick=()=>{
   camera.position.set(controls.target.x,controls.target.y+dist,controls.target.z+Math.max(0.5,dist*0.0005));
   controls.update();
 };
-$('reset').onclick=reset;
+$('reset').onclick=focusSelectedSites;
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);drawElevProfile()});
 addEventListener('keydown',event=>{
   if(event.code==='Escape'){
